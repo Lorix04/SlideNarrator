@@ -1,234 +1,182 @@
-# PPTX TTS — Audio e video per presentazioni PowerPoint
+<p align="center">
+  <img src="assets/slide_narrator_logo.png" alt="SlideNarrator" width="820">
+</p>
 
-Applicazione desktop in **Python** per trasformare una presentazione PowerPoint in:
+**Slide Narrator** è un'applicazione desktop per Windows che trasforma una presentazione PowerPoint in:
 
-- un nuovo file **PPTX con narrazione audio incorporata**;
-- un **video MP4** composto dalle slide e dalla relativa narrazione;
-- sottotitoli sincronizzati e report delle durate.
+- un nuovo file `.pptx` con narrazione audio incorporata;
+- un video `.mp4` composto dalle slide e dalla relativa narrazione;
+- sottotitoli `.srt`, report delle durate e dati di sincronizzazione in JSON.
 
-Il testo da leggere viene fornito tramite un file Excel: ogni riga della colonna **A** corrisponde a una slide della presentazione.
+Lo script da leggere può essere caricato da un file Excel oppure dalle note delle slide. Ogni riga della colonna scelta nel file `.xlsx` corrisponde a una slide.
 
-> Il progetto è pensato principalmente per Windows e può utilizzare sia voci Microsoft online sia modelli locali di sintesi e clonazione vocale.
+## Funzioni principali
 
-## Funzionalità principali
-
-- Importazione di presentazioni `.pptx` e script `.xlsx`.
-- Associazione automatica tra righe Excel e slide PowerPoint.
-- Sintesi vocale con voci neurali Microsoft tramite Edge TTS.
-- Clonazione vocale locale con PocketTTS, Chatterbox TTS e XTTS v2.
-- Registrazione e importazione di campioni vocali.
-- Libreria locale per aggiungere, rinominare ed eliminare voci personalizzate.
-- Anteprima della voce prima della generazione completa.
-- Regolazione della velocità di lettura.
-- Inserimento automatico dell'audio nelle slide.
-- Riproduzione automatica della narrazione all'apertura della slide.
-- Avanzamento opzionale alla slide successiva al termine dell'audio.
-- Esportazione video in 720p o 1080p.
-- Dissolvenza incrociata opzionale tra le slide.
-- Creazione di sottotitoli `.srt`, con possibilità di incorporarli nel video.
-- Generazione di un report con la durata di ogni slide.
-- Esportazione di un file `_captions.json` con i timing delle frasi, utilizzabile da applicazioni esterne come uno SCORM Builder.
-- Cache degli audio già generati.
-- Elaborazione parallela delle slide per ridurre i tempi di sintesi.
-- Modalità sperimentale INT8 per PocketTTS su CPU.
-
-## Flusso di elaborazione
-
-### PowerPoint con audio
-
-```text
-Presentazione PPTX + script XLSX
-              ↓
-        Sintesi vocale
-              ↓
- Inserimento audio e configurazione autoplay
-              ↓
- PPTX narrato + report durate + captions JSON
-```
-
-### Video MP4
-
-```text
-Presentazione PPTX + script XLSX
-              ↓
-        Sintesi vocale
-              ↓
-LibreOffice: PPTX → PDF
-              ↓
-PyMuPDF: PDF → immagini PNG
-              ↓
-FFmpeg: immagini + audio + sottotitoli → MP4
-```
-
-Il video utilizza immagini statiche delle slide e non riproduce le animazioni native di PowerPoint.
+- Interfaccia grafica moderna con navigazione laterale e procedura guidata.
+- Sintesi vocale online con voci Microsoft tramite Edge TTS.
+- Supporto opzionale a PocketTTS, Chatterbox TTS e Coqui XTTS per voci locali.
+- Importazione o registrazione di campioni vocali, con libreria locale delle voci.
+- Generazione di PowerPoint con audio, autoplay e avanzamento automatico opzionale.
+- Modalità **Fix** per completare o riparare presentazioni già sonorizzate.
+- Esportazione video 720p o 1080p tramite PowerPoint o LibreOffice, FFmpeg e PyMuPDF.
+- Sottotitoli, dissolvenze, report delle durate e file `_captions.json`.
+- Elaborazione batch tramite manifest JSON.
+- Cache degli audio già generati e sintesi concorrente.
 
 ## Requisiti
 
-### Requisiti di base
+### Base
 
 - Windows 10 o Windows 11.
-- Python dalla versione **3.10 alla 3.14**.
+- Python da 3.10 a 3.14, preferibilmente a 64 bit.
 - Connessione Internet per le voci Microsoft Edge TTS.
 
-Durante l'installazione di Python, attivare l'opzione **Add Python to PATH**.
+Durante l'installazione di Python, attivare **Add Python to PATH**.
 
-### Requisiti aggiuntivi
+### Funzioni opzionali
 
 | Funzione | Requisito |
 |---|---|
-| PowerPoint con voci Microsoft | Python e dipendenze base |
-| Compatibilità audio avanzata | FFmpeg |
-| Voci clonate locali | FFmpeg, PocketTTS o Chatterbox TTS |
+| Esportazione video | FFmpeg, PyMuPDF e PowerPoint oppure LibreOffice |
 | Registrazione dal microfono | `sounddevice` |
-| Esportazione video | FFmpeg, LibreOffice e PyMuPDF |
-| PocketTTS | Accesso al modello `kyutai/pocket-tts` su Hugging Face |
-| XTTS v2 | `coqui-tts` e accettazione della relativa licenza |
+| PocketTTS / Chatterbox | Dipendenze in `requirements-clone.txt` |
+| Coqui XTTS | Dipendenze in `requirements-xtts.txt` e rispetto della licenza del modello |
 
-Le voci clonate possono richiedere diversi gigabyte di spazio e una quantità significativa di RAM. In assenza di una GPU compatibile, i modelli vengono eseguiti sulla CPU.
+I modelli vocali locali possono richiedere diversi gigabyte di spazio e molta RAM.
 
-## Installazione su Windows
 
-1. Scaricare o clonare il repository:
+## Installazione degli strumenti dall'app
 
-   ```bash
-   git clone https://github.com/Lorix04/TTS_PPTX-MP4.git
-   cd TTS_PPTX-MP4
+Nella pagina **Impostazioni → Strumenti e tecnologie** puoi controllare e installare i componenti esterni usati da Slide Narrator:
+
+- **FFmpeg**, per montaggio audio/video e sottotitoli;
+- **LibreOffice**, come motore alternativo per il rendering delle slide;
+- **Microsoft PowerPoint**, con collegamento alla pagina Microsoft 365 quando non è installato.
+
+Su Windows, i pulsanti di installazione usano **WinGet** e mostrano lo stato aggiornato dei componenti. I motori vocali locali come PocketTTS, Chatterbox e XTTS non possono essere aggiunti a un EXE già compilato: devono essere installati nell'ambiente sorgente e inclusi in una nuova build.
+
+## Installazione rapida su Windows
+
+1. Clonare la repository:
+
+   ```powershell
+   git clone https://github.com/Lorix04/SlideNarrator.git
+   cd SlideNarrator
    ```
 
-2. Eseguire con un doppio clic:
+2. Avviare:
 
    ```text
-   Installa_PPTX_TTS.bat
+   Installa_Slide_Narrator.bat
    ```
 
-3. Lo script di installazione:
-
-   - crea l'ambiente virtuale `.venv`;
-   - installa le dipendenze principali;
-   - propone l'installazione dei motori per le voci clonate;
-   - propone l'installazione opzionale di XTTS v2;
-   - verifica la presenza di FFmpeg e LibreOffice.
-
-4. Al termine, avviare l'applicazione con:
+3. Al termine, aprire:
 
    ```text
-   Avvia_PPTX_TTS.bat
+   Avvia_Slide_Narrator.bat
    ```
+
+L'installer crea un runtime isolato in `%LOCALAPPDATA%\SlideNarrator`, installa le dipendenze base e propone l'installazione delle funzioni opzionali.
+
+In caso di installazione danneggiata, usare:
+
+```text
+Ripara_Installazione_Slide_Narrator.bat
+```
+
+Per rimuovere il runtime e le tecnologie installate per il progetto, lasciando Python intatto:
+
+```text
+Disinstalla_Componenti_Slide_Narrator.bat
+```
+
+> **Nota sui motori opzionali:** PocketTTS, Chatterbox e Coqui XTTS non sono necessari per usare Edge TTS. Un messaggio di Transformers relativo all'assenza di PyTorch indica soltanto che i modelli locali opzionali non sono disponibili.
 
 ## Installazione manuale
 
-Creare e attivare un ambiente virtuale:
-
-```bash
+```powershell
 python -m venv .venv
 .venv\Scripts\activate
 python -m pip install --upgrade pip
+pip install -r requirements.txt
+python slide_narrator_gui.py
 ```
 
-Installare le dipendenze di base:
+Per le voci locali:
 
-```bash
-pip install edge-tts python-pptx openpyxl lxml mutagen pygame-ce pymupdf
+```powershell
+pip install -r requirements-clone.txt
 ```
 
-Installare facoltativamente i motori di clonazione vocale:
+Per XTTS:
 
-```bash
-pip install pocket-tts sounddevice
-pip install chatterbox-tts
+```powershell
+pip install -r requirements-xtts.txt
 ```
 
-Installare XTTS v2 solo quando necessario:
-
-```bash
-pip install coqui-tts
-```
-
-FFmpeg e LibreOffice sono programmi esterni e devono essere installati separatamente o tramite le opzioni offerte dallo script `Installa_PPTX_TTS.bat`.
-
-## Preparazione dei file di input
+## Preparazione dei file
 
 ### Presentazione PowerPoint
 
-Utilizzare una presentazione originale in formato `.pptx`.
+Usare una presentazione originale `.pptx`. Per cambiare voce o script è consigliabile ripartire sempre dal file originale, senza audio già incorporato. La modalità **Fix** è destinata alla riparazione controllata di file già sonorizzati.
 
-Non usare come input un file già generato da PPTX TTS. Per cambiare voce o script, ripartire sempre dal PowerPoint originale senza audio incorporato.
+### Script Excel
 
-### File Excel
-
-Il file `.xlsx` deve contenere un testo per ogni slide nella colonna **A**:
+Per impostazione predefinita, il file `.xlsx` contiene un testo per slide nella colonna A:
 
 | Cella | Contenuto |
 |---|---|
-| A1 | Testo da leggere nella slide 1 |
-| A2 | Testo da leggere nella slide 2 |
-| A3 | Testo da leggere nella slide 3 |
+| A1 | Testo della slide 1 |
+| A2 | Testo della slide 2 |
+| A3 | Testo della slide 3 |
 
-Non inserire un'intestazione, a meno che non debba essere letta come testo della prima slide.
+È possibile scegliere un altro foglio, un'altra colonna, indicare la presenza di un'intestazione oppure leggere il testo dalle note PowerPoint.
 
-- Le celle vuote producono slide senza narrazione.
-- Se gli script sono meno delle slide, le slide finali rimangono mute.
-- Se gli script sono più delle slide, quelli in eccesso vengono ignorati.
+## Utilizzo dall'interfaccia grafica
 
-## Utilizzo tramite interfaccia grafica
+1. Scegliere il tipo di elaborazione: PowerPoint, video o Fix.
+2. Selezionare la presentazione e la sorgente degli script.
+3. Scegliere voce, velocità, volume e tonalità.
+4. Configurare autoplay, avanzamento, sottotitoli e opzioni video.
+5. Avviare la generazione e attendere il completamento.
 
-1. Scegliere il tipo di output:
-   - **PowerPoint con audio**;
-   - **Video MP4**.
-2. Selezionare il file PowerPoint originale.
-3. Selezionare il file Excel contenente gli script.
-4. Scegliere il percorso del file di output.
-5. Selezionare la voce e la velocità di lettura.
-6. Ascoltare eventualmente un'anteprima.
-7. Configurare le opzioni specifiche dell'output.
-8. Premere il pulsante di generazione e attendere il completamento.
+## Utilizzo da riga di comando
 
-### Opzioni PowerPoint
+PowerPoint narrato:
 
-- Riproduzione automatica dell'audio.
-- Avanzamento automatico al termine della narrazione.
-- Riconversione degli MP3 a 44.100 Hz mono per migliorare la compatibilità con alcune versioni di PowerPoint.
+```powershell
+python slide_narrator.py input.pptx scripts.xlsx output_audio.pptx
+```
 
-### Opzioni video
+Con opzioni:
 
-- Risoluzione 720p o 1080p.
-- Sottotitoli incorporati nel video.
-- Dissolvenza incrociata tra le slide.
+```powershell
+python slide_narrator.py input.pptx scripts.xlsx output_audio.pptx --voice it-IT-IsabellaNeural --rate +5% --auto-advance
+```
 
-Un file `.srt` viene salvato accanto al video anche quando i sottotitoli non vengono incorporati.
+Video:
 
-## Voci disponibili
+```powershell
+python slide_narrator.py input.pptx scripts.xlsx output_video.mp4 --video --resolution 1080p --subtitles --transition
+```
 
-### Voci Microsoft
+Per visualizzare tutte le opzioni:
 
-Le voci Microsoft vengono generate online tramite Edge TTS:
+```powershell
+python slide_narrator.py --help
+```
 
-- Isabella — `it-IT-IsabellaNeural`;
-- Elsa — `it-IT-ElsaNeural`;
-- Diego — `it-IT-DiegoNeural`;
-- Giuseppe — `it-IT-GiuseppeNeural`.
+## Elaborazione batch
 
-### Voci clonate locali
+Modificare `ESEMPIO_BATCH.json`, quindi trascinarlo su `Avvia_Batch_Slide_Narrator.bat` oppure eseguire:
 
-Sono supportati i seguenti motori:
-
-- **PocketTTS**: soluzione consigliata per velocità e utilizzo su CPU;
-- **Chatterbox TTS**: maggiore espressività, ma tempi più lunghi su CPU;
-- **XTTS v2**: motore opzionale con italiano nativo, soggetto a specifiche condizioni di licenza.
-
-Dal gestore delle voci è possibile:
-
-- importare un campione audio;
-- registrare un campione dal microfono;
-- scegliere il motore TTS;
-- salvare la voce nella libreria locale;
-- rinominare o eliminare le voci registrate.
-
-Per ottenere risultati migliori, utilizzare una registrazione pulita, in un ambiente silenzioso e con ritmo naturale. Il progetto raccomanda un campione di circa 30 secondi.
+```powershell
+Avvia_Batch_Slide_Narrator.bat ESEMPIO_BATCH.json
+```
 
 ## File generati
 
-Con un output chiamato `corso_audio.pptx`, l'applicazione può produrre:
+Esempio PowerPoint:
 
 ```text
 corso_audio.pptx
@@ -236,7 +184,7 @@ corso_audio_durate.txt
 corso_audio_captions.json
 ```
 
-Con un output chiamato `corso_video.mp4`, può produrre:
+Esempio video:
 
 ```text
 corso_video.mp4
@@ -244,152 +192,159 @@ corso_video.srt
 corso_video_durate.txt
 ```
 
-Il file `_captions.json` contiene, per ogni slide, il testo e i timing iniziali e finali delle frasi.
-
-## Utilizzo da riga di comando
-
-### Generazione di un PowerPoint narrato
-
-```bash
-python pptx_tts.py input.pptx scripts.xlsx output_audio.pptx
-```
-
-Esempio con voce, velocità e avanzamento automatico:
-
-```bash
-python pptx_tts.py input.pptx scripts.xlsx output_audio.pptx \
-  --voice it-IT-IsabellaNeural \
-  --rate +5% \
-  --auto-advance
-```
-
-In PowerShell o nel Prompt dei comandi di Windows, il comando può essere scritto su un'unica riga.
-
-### Generazione di un video
-
-```bash
-python pptx_tts.py input.pptx scripts.xlsx output_video.mp4 \
-  --video \
-  --resolution 1080p \
-  --subtitles \
-  --transition
-```
-
-### Opzioni principali
-
-| Opzione | Descrizione |
-|---|---|
-| `--voice` | Voce Microsoft o identificativo di una voce clonata |
-| `--rate` | Velocità della voce, ad esempio `-10%`, `+0%` o `+15%` |
-| `--no-autoplay` | Disattiva la riproduzione automatica |
-| `--auto-advance` | Avanza alla slide successiva al termine dell'audio |
-| `--concurrency` | Numero di sintesi Edge TTS eseguite contemporaneamente |
-| `--transcode-audio` | Converte gli MP3 tramite FFmpeg per PowerPoint |
-| `--video` | Genera un MP4 invece di un PPTX |
-| `--resolution` | Imposta `720p` o `1080p` |
-| `--subtitles` | Incorpora i sottotitoli nel video |
-| `--transition` | Applica una dissolvenza tra le slide |
-| `--pocket-variant` | Seleziona PocketTTS veloce o ad alta qualità |
-| `--clone-workers` | Numero di slide elaborate in parallelo con voci clonate |
-| `--no-cache` | Disattiva il riutilizzo degli audio già generati |
-| `--pocket-quantize` | Attiva la modalità INT8 sperimentale di PocketTTS |
-
-Per visualizzare tutte le opzioni:
-
-```bash
-python pptx_tts.py --help
-```
-
-## Cache
-
-Per le voci clonate, la cache è attiva per impostazione predefinita. Gli audio vengono riutilizzati quando non cambiano:
-
-- testo;
-- voce;
-- velocità;
-- motore e variante del modello.
-
-La directory predefinita è:
+## Struttura essenziale
 
 ```text
-%USERPROFILE%\.pptx_tts_cache
+SlideNarrator/
+├── slide_narrator.py
+├── slide_narrator_gui.py
+├── slide_narrator_gui_legacy.py
+├── slide_narrator_batch.py
+├── slide_narrator_bootstrap.py
+├── video_export.py
+├── voice_clone.py
+├── voice_library.py
+├── voice_manager.py
+├── verifica_installazione.py
+├── requirements.txt
+├── requirements-clone.txt
+├── requirements-xtts.txt
+├── requirements-build.txt
+├── SECURITY.md
+├── Build_EXE_SlideNarrator.bat
+├── Build_EXE_CustomBootloader_SlideNarrator.bat
+├── Verifica_RELEASE_SlideNarrator.bat
+├── Firma_RELEASE_SlideNarrator.bat
+├── Build_Installer_SlideNarrator.bat
+├── packaging/
+│   └── windows/
+│       ├── SlideNarrator.manifest
+│       ├── SlideNarrator.version.txt
+│       └── Verifica_RELEASE_SlideNarrator.ps1
+├── installer/
+│   └── SlideNarrator.iss
+├── assets/
+│   ├── slide_narrator_logo.png
+│   ├── slide_narrator_icon.png
+│   ├── slide_narrator_icon_sidebar.png
+│   └── slide_narrator_icon.ico
+├── Installa_Slide_Narrator.bat
+├── Installa_Slide_Narrator.ps1
+├── Avvia_Slide_Narrator.bat
+├── Avvia_Slide_Narrator.ps1
+├── Ripara_Installazione_Slide_Narrator.bat
+├── Ripara_Installazione_Slide_Narrator.ps1
+├── Disinstalla_Componenti_Slide_Narrator.bat
+├── Avvia_Batch_Slide_Narrator.bat
+├── Avvia_Batch_Slide_Narrator.ps1
+└── ESEMPIO_BATCH.json
 ```
 
-È possibile cambiarla tramite la variabile d'ambiente `PPTXTTS_CACHE_DIR` oppure svuotarla dall'interfaccia grafica.
+La cartella `voices/` viene creata automaticamente e non deve contenere registrazioni personali nella repository.
 
-## Struttura del progetto
+Il logo orizzontale e l'icona ufficiale sono conservati in `assets/`. Il PNG principale viene usato nella finestra, la variante compatta nella sidebar e il file `.ico` fornisce le risoluzioni Windows per barra del titolo, taskbar e collegamenti.
 
-```text
-TTS_PPTX-MP4/
-├── pptx_tts.py          # Pipeline principale e interfaccia CLI
-├── pptx_tts_gui.py      # Interfaccia desktop Tkinter
-├── video_export.py      # Rendering delle slide ed esportazione MP4/SRT
-├── voice_clone.py       # Motori di sintesi e clonazione vocale
-├── voice_library.py     # Archivio locale delle voci personalizzate
-├── voice_manager.py     # Interfaccia di gestione e registrazione delle voci
-├── test_limite_token.py # Test sperimentale per PocketTTS
-├── Installa_PPTX_TTS.bat
-├── Avvia_PPTX_TTS.bat
-└── LEGGIMI_PRIMA.txt
-```
+## Privacy e sicurezza
 
-La cartella `voices/` contiene i campioni vocali locali e può essere esclusa dal repository per ragioni di privacy.
+Non pubblicare:
 
-## Tecnologie utilizzate
+- registrazioni vocali personali o campioni senza consenso;
+- token, password, chiavi API o file `.env`;
+- ambienti virtuali, cache, file generati o log locali.
 
-| Tecnologia | Utilizzo nel progetto |
-|---|---|
-| Python | Linguaggio principale e orchestrazione della pipeline |
-| Tkinter / ttk | Interfaccia grafica desktop |
-| Edge TTS | Sintesi vocale tramite voci Microsoft |
-| PocketTTS | Clonazione vocale locale orientata alla velocità |
-| Chatterbox TTS | Clonazione vocale locale più espressiva |
-| Coqui XTTS v2 | Motore TTS opzionale multilingua |
-| PyTorch / Torchaudio | Esecuzione dei modelli AI e trattamento dell'audio |
-| Transformers | Componenti utilizzati dai modelli di sintesi |
-| python-pptx | Lettura e modifica delle presentazioni PowerPoint |
-| openpyxl | Lettura degli script dal file Excel |
-| lxml / OOXML | Modifica avanzata dell'XML interno dei file PPTX |
-| Mutagen | Lettura della durata degli MP3 |
-| SoundFile / sounddevice | Gestione e registrazione dei campioni audio |
-| pygame-ce | Riproduzione delle anteprime vocali |
-| FFmpeg | Conversione audio, sottotitoli e montaggio video |
-| LibreOffice Headless | Rendering delle presentazioni in PDF |
-| PyMuPDF | Conversione delle pagine PDF in immagini PNG |
-| Asyncio / multiprocessing | Sintesi concorrente e parallelizzazione |
+Usare la clonazione vocale solo con il consenso della persona interessata e nel rispetto delle norme applicabili.
 
 ## Limitazioni note
 
-- Il progetto è orientato principalmente a Windows.
-- Edge TTS richiede una connessione Internet.
-- L'esportazione video non conserva animazioni, transizioni native o interattività del PowerPoint.
-- L'attivazione dell'autoplay può sostituire i timing e le animazioni già presenti nelle slide. Conservare sempre una copia del file originale.
-- Un PowerPoint già elaborato dall'applicazione non deve essere riutilizzato come input.
-- Un numero elevato di processi paralleli per le voci clonate può consumare molta RAM.
-- La resa delle slide esportate da LibreOffice può differire leggermente da quella di Microsoft PowerPoint.
-- La modalità INT8 di PocketTTS è sperimentale e può ridurre la qualità della voce.
+- Le voci Microsoft richiedono Internet.
+- Il video usa immagini renderizzate delle slide e non conserva le animazioni native di PowerPoint.
+- La resa con LibreOffice può differire leggermente da Microsoft PowerPoint.
+- Le voci locali possono essere lente su CPU e consumare molta memoria.
+- La modalità INT8 di PocketTTS è sperimentale.
 
-## Privacy e uso responsabile delle voci
+## Licenze
 
-Utilizzare la clonazione vocale esclusivamente con il consenso della persona interessata e nel rispetto delle normative applicabili.
+Le dipendenze e i modelli vocali possono avere licenze differenti. Verificare sempre le condizioni del motore e del modello scelto, soprattutto prima di distribuire o vendere contenuti generati.
 
-Non pubblicare nel repository:
+Questa repository non include un file di licenza generale: aggiungerne uno prima di autorizzare esplicitamente il riutilizzo del codice.
 
-- registrazioni vocali personali;
-- token di Hugging Face;
-- file `.env`;
-- credenziali o altri dati riservati.
 
-È consigliabile aggiungere `voices/`, `.venv/` e la cache al file `.gitignore`.
+## Creare una release Windows con meno falsi positivi
 
-## Licenze dei modelli
+Per generare la versione portabile esegui su Windows:
 
-Le librerie e i modelli integrati possono avere licenze diverse da quella del codice del progetto.
+```text
+Build_EXE_SlideNarrator.bat
+```
 
-In particolare, **XTTS v2** è indicato nel progetto per uso non commerciale. Verificare sempre le condizioni aggiornate delle singole dipendenze e dei modelli prima di distribuire o vendere contenuti generati.
+Lo script crea un ambiente di compilazione nuovo a ogni build, installa soltanto le dipendenze dichiarate e produce:
 
-Il repository non include attualmente un file `LICENSE` generale: aggiungerne uno prima di consentire il riutilizzo o la distribuzione del codice.
+```text
+dist\SlideNarrator\SlideNarrator.exe
+release\SlideNarrator_2.9.0_Windows_x64_portable.zip
+release\SlideNarrator_2.9.0_Windows_x64_portable.zip.sha256.txt
+```
 
-## Contributi
+La release usa PyInstaller in modalità **onedir**, non `onefile`, e disabilita UPX. Include inoltre icona, manifest `asInvoker`, informazioni di versione e metadati della build. La cartella completa `dist\SlideNarrator` deve restare unita: non distribuire soltanto l’EXE.
 
-Segnalazioni, correzioni e proposte di miglioramento possono essere inviate tramite le issue o le pull request del repository.
+### Bootloader personalizzato
+
+PyInstaller documenta che compilare localmente il bootloader può ridurre i falsi positivi associati all’uso diffuso dei bootloader precompilati. Dopo aver installato Visual Studio C++ Build Tools puoi usare:
+
+```text
+Build_EXE_CustomBootloader_SlideNarrator.bat
+```
+
+La modalità personalizzata richiede più tempo e non sostituisce la firma digitale.
+
+### Verifica e firma
+
+Esegui:
+
+```text
+Verifica_RELEASE_SlideNarrator.bat
+```
+
+Il controllo genera hash SHA-256, verifica l’eventuale firma Authenticode e avvia una scansione personalizzata con Microsoft Defender quando `MpCmdRun.exe` è disponibile.
+
+Per una distribuzione pubblica è raccomandata una firma Authenticode attendibile. Dopo aver installato il certificato nell’archivio certificati Windows:
+
+```bat
+set "SLIDENARRATOR_CERT_SUBJECT=Nome esatto dell'editore"
+Firma_RELEASE_SlideNarrator.bat
+```
+
+Un certificato autofirmato è utile solo in ambienti controllati e non costruisce reputazione pubblica.
+
+### Installer
+
+Dopo la build portabile, con Inno Setup installato esegui:
+
+```text
+Build_Installer_SlideNarrator.bat
+```
+
+L’installer viene creato in:
+
+```text
+installer\output\SlideNarrator_Setup_2.9.0.exe
+```
+
+Firma anche l’installer prima della pubblicazione. Carica il file finale nella sezione **GitHub Releases**, insieme all’hash SHA-256; non aggiungerlo alla cronologia Git.
+
+Consulta anche [`SECURITY.md`](SECURITY.md). Non chiedere agli utenti di disabilitare l’antivirus o creare esclusioni.
+
+## Baseline Tkinter e sviluppo della nuova interfaccia
+
+La versione stabile precedente alla migrazione PySide6/QML è documentata in:
+
+- [`docs/TKINTER_BASELINE.md`](docs/TKINTER_BASELINE.md)
+- [`docs/FUNCTIONAL_INVENTORY_TKINTER.md`](docs/FUNCTIONAL_INVENTORY_TKINTER.md)
+
+Dopo aver pubblicato e verificato l'ultimo commit di `main`, eseguire `Congela_Versione_Tkinter.bat` per creare il tag annotato `v2.9.0-tkinter` e il branch `feature/pyside6-ui`.
+
+L'integrità della baseline può essere controllata con:
+
+```bash
+python tools/verify_tkinter_baseline.py
+```

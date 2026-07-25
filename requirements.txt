@@ -1,0 +1,10 @@
+# Dipendenze base verificate per Slide Narrator
+ttkbootstrap==2.0.0
+edge-tts==7.2.8
+python-pptx==1.0.2
+openpyxl==3.1.5
+lxml>=5.3,<7
+mutagen==1.47.0
+pygame-ce>=2.5,<3
+PyMuPDF>=1.26,<2
+pywin32>=306; platform_system == "Windows"

@@ -1,0 +1,4 @@
+# Motori locali opzionali. Installarli preferibilmente con Python 3.11.
+pocket-tts
+sounddevice
+chatterbox-tts

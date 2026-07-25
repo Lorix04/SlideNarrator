@@ -1,0 +1,2 @@
+# Dipendenze usate esclusivamente sul PC di compilazione
+PyInstaller==6.21.0

@@ -25,6 +25,8 @@ import os
 import shutil
 import subprocess
 import tempfile
+import threading
+import time
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -38,12 +40,12 @@ AUDIO_BITRATE = "192k"
 
 # Preset di codifica x264. Per immagini statiche un preset veloce non cambia la
 # qualità percepita (il fotogramma non si muove) ma accelera molto la codifica.
-VIDEO_PRESET = os.environ.get("PPTXTTS_VIDEO_PRESET", "veryfast")
-VIDEO_CRF = os.environ.get("PPTXTTS_VIDEO_CRF", "23")
+VIDEO_PRESET = os.environ.get("SLIDENARRATOR_VIDEO_PRESET", "veryfast")
+VIDEO_CRF = os.environ.get("SLIDENARRATOR_VIDEO_CRF", "23")
 
 # Quanti clip creare in parallelo (ffmpeg indipendenti). None = auto in base
 # ai core. Ogni ffmpeg è già multi-thread, quindi non conviene esagerare.
-_CLIP_WORKERS_ENV = os.environ.get("PPTXTTS_CLIP_WORKERS", "").strip()
+_CLIP_WORKERS_ENV = os.environ.get("SLIDENARRATOR_CLIP_WORKERS", "").strip()
 try:
     CLIP_WORKERS: Optional[int] = int(_CLIP_WORKERS_ENV) if _CLIP_WORKERS_ENV else None
 except ValueError:
@@ -64,17 +66,36 @@ RESOLUTIONS = {
 DEFAULT_RESOLUTION = "1080p"
 
 # Timeout generosi per i sottoprocessi (conversione e codifica).
-SOFFICE_TIMEOUT_S = int(os.environ.get("PPTXTTS_SOFFICE_TIMEOUT_S", "180"))
-FFMPEG_TIMEOUT_S = int(os.environ.get("PPTXTTS_FFMPEG_TIMEOUT_S", "600"))
+SOFFICE_TIMEOUT_S = int(os.environ.get("SLIDENARRATOR_SOFFICE_TIMEOUT_S", "180"))
+FFMPEG_TIMEOUT_S = int(os.environ.get("SLIDENARRATOR_FFMPEG_TIMEOUT_S", "600"))
 FFMPEG_LONG_TIMEOUT_MIN_S = int(
-    os.environ.get("PPTXTTS_FFMPEG_LONG_TIMEOUT_MIN_S", "1800")
+    os.environ.get("SLIDENARRATOR_FFMPEG_LONG_TIMEOUT_MIN_S", "1800")
 )
 FFMPEG_LONG_TIMEOUT_FACTOR = float(
-    os.environ.get("PPTXTTS_FFMPEG_LONG_TIMEOUT_FACTOR", "4.0")
+    os.environ.get("SLIDENARRATOR_FFMPEG_LONG_TIMEOUT_FACTOR", "4.0")
 )
 
 
 ProgressCallback = Optional[Callable[[dict], None]]
+
+_ACTIVE_PROCESSES: set[subprocess.Popen] = set()
+_ACTIVE_LOCK = threading.Lock()
+_CURRENT_CANCEL_EVENT = None
+
+
+def _is_cancelled() -> bool:
+    return _CURRENT_CANCEL_EVENT is not None and _CURRENT_CANCEL_EVENT.is_set()
+
+
+def cancel_active_processes() -> None:
+    with _ACTIVE_LOCK:
+        procs = list(_ACTIVE_PROCESSES)
+    for proc in procs:
+        try:
+            proc.terminate()
+        except Exception:
+            pass
+
 
 
 class VideoExportError(Exception):
@@ -85,15 +106,45 @@ class VideoExportError(Exception):
 # Utilità sottoprocessi
 # ----------------------------------------------------------------------------
 def _run(cmd: list[str], timeout: int, what: str) -> None:
-    """Esegue un comando e solleva VideoExportError con stderr se fallisce."""
+    """Esegue un comando in modo annullabile e raccoglie stderr."""
+    if _is_cancelled():
+        raise VideoExportError("Operazione annullata dall'utente.")
     try:
-        proc = subprocess.run(cmd, capture_output=True, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        raise VideoExportError(f"{what}: timeout dopo {timeout}s.")
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except FileNotFoundError:
         raise VideoExportError(f"{what}: comando non trovato ({cmd[0]}).")
+    with _ACTIVE_LOCK:
+        _ACTIVE_PROCESSES.add(proc)
+    deadline = time.monotonic() + timeout
+    try:
+        while proc.poll() is None:
+            if _is_cancelled():
+                try:
+                    proc.terminate()
+                    proc.wait(timeout=3)
+                except Exception:
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+                raise VideoExportError("Operazione annullata dall'utente.")
+            if time.monotonic() >= deadline:
+                try:
+                    proc.terminate()
+                    proc.wait(timeout=3)
+                except Exception:
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+                raise VideoExportError(f"{what}: timeout dopo {timeout}s.")
+            time.sleep(0.1)
+        stdout, stderr = proc.communicate()
+    finally:
+        with _ACTIVE_LOCK:
+            _ACTIVE_PROCESSES.discard(proc)
     if proc.returncode != 0:
-        err = proc.stderr.decode(errors="replace")[:400]
+        err = stderr.decode(errors="replace")[:700]
         raise VideoExportError(f"{what} fallito: {err}")
 
 
@@ -143,21 +194,57 @@ def _find_soffice() -> Optional[str]:
 # ----------------------------------------------------------------------------
 # 1. Rendering delle slide in immagini
 # ----------------------------------------------------------------------------
-def pptx_to_pdf(pptx_path: str | Path, work_dir: str | Path) -> Path:
-    """Converte il pptx in PDF con LibreOffice headless. Restituisce il path PDF."""
+def _powerpoint_to_pdf(pptx_path: str | Path, work_dir: str | Path) -> Path:
+    """Rendering opzionale tramite Microsoft PowerPoint desktop (Windows)."""
+    if not sys.platform.startswith("win"):
+        raise VideoExportError("Il backend PowerPoint è disponibile soltanto su Windows.")
+    try:
+        import pythoncom
+        import win32com.client
+    except Exception as exc:
+        raise VideoExportError(
+            "Backend PowerPoint non disponibile: installare pywin32 nell'ambiente virtuale."
+        ) from exc
+    output = Path(work_dir) / (Path(pptx_path).stem + ".pdf")
+    app = presentation = None
+    pythoncom.CoInitialize()
+    try:
+        app = win32com.client.DispatchEx("PowerPoint.Application")
+        app.Visible = 0
+        presentation = app.Presentations.Open(
+            str(Path(pptx_path).resolve()), ReadOnly=True, Untitled=False, WithWindow=False
+        )
+        # ppSaveAsPDF = 32
+        presentation.SaveAs(str(output.resolve()), 32)
+    except Exception as exc:
+        raise VideoExportError(f"Esportazione PDF con PowerPoint fallita: {exc}") from exc
+    finally:
+        try:
+            if presentation is not None:
+                presentation.Close()
+        except Exception:
+            pass
+        try:
+            if app is not None:
+                app.Quit()
+        except Exception:
+            pass
+        pythoncom.CoUninitialize()
+    if not output.exists() or output.stat().st_size < 1000:
+        raise VideoExportError("PowerPoint non ha prodotto un PDF valido.")
+    return output
+
+
+def _libreoffice_to_pdf(pptx_path: str | Path, work_dir: str | Path) -> Path:
     soffice = _find_soffice()
     if not soffice:
         raise VideoExportError(
-            "LibreOffice non trovato: serve per disegnare le slide del video. "
-            "Installalo da https://www.libreoffice.org/ e riprova."
+            "LibreOffice non trovato: installarlo oppure scegliere il backend PowerPoint su Windows."
         )
     work_dir = Path(work_dir)
-    # Profilo utente temporaneo: evita conflitti se un'altra istanza di
-    # LibreOffice è già aperta.
     profile = (work_dir / "lo_profile").as_uri()
     _run(
-        [soffice, "--headless", "--norestore",
-         f"-env:UserInstallation={profile}",
+        [soffice, "--headless", "--norestore", f"-env:UserInstallation={profile}",
          "--convert-to", "pdf", "--outdir", str(work_dir), str(pptx_path)],
         timeout=SOFFICE_TIMEOUT_S, what="Conversione pptx->pdf (LibreOffice)",
     )
@@ -166,6 +253,32 @@ def pptx_to_pdf(pptx_path: str | Path, work_dir: str | Path) -> Path:
         raise VideoExportError("LibreOffice non ha prodotto il PDF atteso.")
     return pdf_path
 
+
+def pptx_to_pdf(
+    pptx_path: str | Path, work_dir: str | Path, backend: str = "auto",
+) -> Path:
+    """Converte il PPTX in PDF usando PowerPoint o LibreOffice.
+
+    In modalità ``auto`` su Windows prova prima PowerPoint desktop, che offre
+    la massima fedeltà grafica, e usa LibreOffice come fallback.
+    """
+    backend = (backend or "auto").lower()
+    errors = []
+    if backend in {"auto", "powerpoint"} and sys.platform.startswith("win"):
+        try:
+            return _powerpoint_to_pdf(pptx_path, work_dir)
+        except Exception as exc:
+            errors.append(str(exc))
+            if backend == "powerpoint":
+                raise
+    if backend in {"auto", "libreoffice"}:
+        try:
+            return _libreoffice_to_pdf(pptx_path, work_dir)
+        except Exception as exc:
+            errors.append(str(exc))
+            if backend == "libreoffice":
+                raise
+    raise VideoExportError("Nessun backend di rendering disponibile. " + " | ".join(errors))
 
 def pdf_to_images(pdf_path: str | Path, work_dir: str | Path,
                   target_width: int) -> list[Path]:
@@ -212,9 +325,9 @@ def pdf_to_images(pdf_path: str | Path, work_dir: str | Path,
 
 
 def render_slides_to_images(pptx_path: str | Path, work_dir: str | Path,
-                            target_width: int) -> list[Path]:
+                            target_width: int, backend: str = "auto") -> list[Path]:
     """pptx -> pdf -> una immagine PNG per slide (in ordine)."""
-    pdf = pptx_to_pdf(pptx_path, work_dir)
+    pdf = pptx_to_pdf(pptx_path, work_dir, backend=backend)
     return pdf_to_images(pdf, work_dir, target_width)
 
 
@@ -292,7 +405,7 @@ def concat_clips(clips: list[str | Path], out_mp4: str | Path,
 
 def render_with_transitions(metas: list[dict], out_video: str | Path,
                             w: int, h: int, transition_s: float,
-                            work_dir: str | Path) -> None:
+                            work_dir: str | Path, transition_style: str = "fade") -> None:
     """Monta il video con dissolvenza incrociata tra le slide.
 
     Idea chiave: ogni slide riceve una piccola coda di `transition_s` secondi.
@@ -330,7 +443,7 @@ def render_with_transitions(metas: list[dict], out_video: str | Path,
         offset = cum - T
         out_label = "[vout]" if k == n - 1 else f"[x{k}]"
         fc.append(
-            f"{prev}[v{k}]xfade=transition=fade:duration={T:.3f}:"
+            f"{prev}[v{k}]xfade=transition={transition_style}:duration={T:.3f}:"
             f"offset={offset:.3f}{out_label}"
         )
         cum += (metas[k]["c"] + T) - T
@@ -433,22 +546,25 @@ def write_slide_srt(sentences: list[dict], srt_path: str | Path) -> Path | None:
 def burn_subtitles(in_mp4: str | Path, srt_path: str | Path,
                    out_mp4: str | Path,
                    duration_s: float | None = None) -> None:
-    """Brucia i sottotitoli SRT nel video (ri-codifica del solo video)."""
+    """Brucia i sottotitoli usando un nome temporaneo sicuro per il filtro."""
     out = Path(out_mp4)
     tmp = _sidecar_path(out, ".__subtmp__")
     if tmp.exists():
         tmp.unlink()
-    try:
-        _run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(in_mp4),
-              "-vf", _subtitles_filter(srt_path),
-              "-c:v", "libx264", "-preset", VIDEO_PRESET, "-crf", VIDEO_CRF,
-              "-c:a", "copy", "-movflags", "+faststart", str(tmp)],
-             timeout=_long_timeout_for(duration_s or 0.0),
-             what="Sottotitoli nel video (ffmpeg)")
-        _replace_output(tmp, out)
-    finally:
-        if tmp.exists():
-            tmp.unlink()
+    with tempfile.TemporaryDirectory(prefix="slide_narrator_sub_") as safe_dir:
+        safe_srt = Path(safe_dir) / "subtitles.srt"
+        shutil.copy2(srt_path, safe_srt)
+        try:
+            _run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(in_mp4),
+                  "-vf", _subtitles_filter(safe_srt),
+                  "-c:v", "libx264", "-preset", VIDEO_PRESET, "-crf", VIDEO_CRF,
+                  "-c:a", "copy", "-movflags", "+faststart", str(tmp)],
+                 timeout=_long_timeout_for(duration_s or 0.0),
+                 what="Sottotitoli nel video (ffmpeg)")
+            _replace_output(tmp, out)
+        finally:
+            if tmp.exists():
+                tmp.unlink()
 
 
 # ----------------------------------------------------------------------------
@@ -515,6 +631,10 @@ def build_video(
     transition: bool = False,
     work_dir: str | Path | None = None,
     progress_callback: ProgressCallback = None,
+    silent_slide_s: float = DEFAULT_SILENT_SLIDE_S,
+    transition_style: str = "fade",
+    render_backend: str = "auto",
+    cancel_event=None,
 ) -> str:
     """
     Costruisce il video MP4.
@@ -532,6 +652,8 @@ def build_video(
     Restituisce il path del video prodotto. Se `subtitles` è True, i sottotitoli
     vengono bruciati nel video; in ogni caso viene scritto un .srt a fianco.
     """
+    global _CURRENT_CANCEL_EVENT
+    _CURRENT_CANCEL_EVENT = cancel_event
     cb = progress_callback if progress_callback is not None else (lambda e: None)
     if resolution not in RESOLUTIONS:
         resolution = DEFAULT_RESOLUTION
@@ -546,13 +668,18 @@ def build_video(
         # 1. RENDER
         cb({"stage": "render_start"})
         print(f"-> Rendering slide in immagini ({w}x{h}) con LibreOffice…")
-        images = render_slides_to_images(pptx_path, work, target_width=w)
+        images = render_slides_to_images(
+            pptx_path, work, target_width=w, backend=render_backend
+        )
         if not images:
             raise VideoExportError("Nessuna immagine prodotta dal rendering.")
-        n = min(len(images), len(slides))
         if len(images) != len(slides):
-            print(f"   ! attenzione: {len(images)} slide renderizzate vs "
-                  f"{len(slides)} previste; uso le prime {n}.")
+            raise VideoExportError(
+                f"Rendering incompleto: LibreOffice ha prodotto {len(images)} "
+                f"pagine ma il PowerPoint contiene {len(slides)} slide. "
+                "Il video non viene creato per evitare un risultato troncato."
+            )
+        n = len(slides)
         print(f"   {len(images)} slide renderizzate.")
 
         # 2. Preparo i metadati per slide (durata contenuto + sottotitoli).
@@ -562,7 +689,7 @@ def build_video(
             s = slides[i]
             audio = s.get("audio")
             duration = (float(s.get("duration_s") or 0.0) if audio
-                        else DEFAULT_SILENT_SLIDE_S)
+                        else float(silent_slide_s))
             duration = max(0.1, duration)
             metas.append({"image": images[i], "audio": audio, "c": duration})
             srt_slides.append({
@@ -579,8 +706,10 @@ def build_video(
             cb({"stage": "muxing"})
             print(f"-> Montaggio del video con dissolvenze "
                   f"({TRANSITION_DURATION_S:.1f}s)…")
-            render_with_transitions(metas, bare_video, w, h,
-                                    TRANSITION_DURATION_S, work)
+            render_with_transitions(
+                metas, bare_video, w, h, TRANSITION_DURATION_S, work,
+                transition_style=transition_style,
+            )
         else:
             if subtitles:
                 wrote_any = False
@@ -609,6 +738,9 @@ def build_video(
                 f.write(srt_text)
             _replace_output(tmp_srt, srt_path)
             print(f"-> Sottotitoli: {srt_path}")
+        elif srt_path.exists():
+            srt_path.unlink()
+            print(f"-> Rimosso SRT obsoleto: {srt_path}")
 
         if burn_subtitles_at_end and srt_text.strip():
             cb({"stage": "subtitles"})
@@ -629,5 +761,6 @@ def build_video(
         print(f"-> Video pronto: {output_mp4}")
         return output_mp4
     finally:
+        _CURRENT_CANCEL_EVENT = None
         if tmp_ctx is not None:
             tmp_ctx.cleanup()

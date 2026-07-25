@@ -1,5 +1,5 @@
 """
-voice_clone.py — Backend di sintesi locale (voci clonate) per pptx_tts
+voice_clone.py — Backend di sintesi locale (voci clonate) per slide_narrator
 
 Questo è il "secondo strato" della feature: trasforma una voce salvata da
 voice_library in audio parlato, usando un modello di cloning che gira in
@@ -11,7 +11,7 @@ Due motori supportati, dietro la stessa astrazione:
 
 --- Il punto chiave: i sottotitoli ---
 Il motore Edge TTS originale fornisce i WordBoundary (timing parola-per-parola)
-da cui pptx_tts ricava le frasi sincronizzate per il _captions.json del SCORM
+da cui slide_narrator ricava le frasi sincronizzate per il _captions.json del SCORM
 Builder. I modelli di cloning NON danno i WordBoundary. Ma il contratto finale
 del JSON è a livello di FRASE, non di parola: quindi qui sintetizziamo una
 frase alla volta, misuriamo la durata di ogni clip e ricaviamo i timing frase
@@ -48,6 +48,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 import wave
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -88,7 +89,7 @@ class SynthesisResult:
 def split_into_sentences(text: str) -> list[str]:
     """
     Spezza il testo in frasi su . ! ? seguiti da spazio (o fine stringa),
-    mantenendo la punteggiatura. Stessa euristica usata da pptx_tts, così i
+    mantenendo la punteggiatura. Stessa euristica usata da slide_narrator, così i
     sottotitoli restano coerenti tra voci Microsoft e voci clonate.
     Se non c'è alcun terminatore, restituisce l'intero testo come unica frase.
     """
@@ -231,7 +232,7 @@ class CloneBackend(ABC):
             dur_s = _wav_duration_ms(ref) / 1000.0
             if dur_s > cap + 0.05:
                 capped = str(Path(tempfile.gettempdir()) /
-                             f"pptxtts_ref_{slug}_{int(cap)}s.wav")
+                             f"slide_narrator_ref_{slug}_{int(cap)}s.wav")
                 _trim_wav_to(ref, capped, cap)
                 chosen = capped
         except Exception:
@@ -815,7 +816,7 @@ def synthesize_clone(
 ) -> SynthesisResult:
     """
     Punto d'ingresso ad alto livello: sceglie il backend dalla voce e sintetizza.
-    Sarà chiamato dal motore (pptx_tts) per le slide con voce clonata.
+    Sarà chiamato dal motore (slide_narrator) per le slide con voce clonata.
 
     `pocket_variant` seleziona la qualità per le voci PocketTTS ("italian" o
     "italian_24l"); `pocket_quantize` attiva la quantizzazione INT8 sperimentale.
@@ -861,9 +862,9 @@ _reference_hash_memo: dict[str, str] = {}
 
 def get_cache_dir() -> Path:
     """Cartella della cache. Sovrascrivibile con la variabile d'ambiente
-    PPTXTTS_CACHE_DIR; di default una cartella nascosta nella home utente."""
-    env = os.environ.get("PPTXTTS_CACHE_DIR")
-    base = Path(env) if env else (Path.home() / ".pptx_tts_cache")
+    SLIDENARRATOR_CACHE_DIR; di default una cartella nascosta nella home utente."""
+    env = os.environ.get("SLIDENARRATOR_CACHE_DIR")
+    base = Path(env) if env else (Path.home() / ".slide_narrator_cache")
     base.mkdir(parents=True, exist_ok=True)
     return base
 
@@ -941,6 +942,57 @@ def _cache_store(key: str, output_path: str, result: SynthesisResult) -> None:
     }), encoding="utf-8")
     os.replace(tmp_mp3, mp3)     # rename atomico: niente entry a metà
     os.replace(tmp_meta, meta)
+
+
+def cleanup_cache(max_age_days: int = 30, max_bytes: int = 5 * 1024**3) -> dict:
+    """Rimuove entry vecchie e limita la cache alla dimensione indicata."""
+    d = get_cache_dir()
+    now = time.time()
+    removed_files = 0
+    removed_bytes = 0
+    entries = []
+    for mp3 in d.glob("*.mp3"):
+        key = mp3.stem
+        meta = d / f"{key}.json"
+        try:
+            st = mp3.stat()
+        except OSError:
+            continue
+        entries.append((st.st_mtime, st.st_size, mp3, meta))
+    cutoff = now - max(1, max_age_days) * 86400
+    kept = []
+    for mtime, size, mp3, meta in entries:
+        if mtime < cutoff:
+            for file in (mp3, meta):
+                try:
+                    removed_bytes += file.stat().st_size
+                    file.unlink(); removed_files += 1
+                except OSError:
+                    pass
+        else:
+            kept.append((mtime, size, mp3, meta))
+    total = sum(size + (meta.stat().st_size if meta.exists() else 0)
+                for _, size, _, meta in kept)
+    for mtime, size, mp3, meta in sorted(kept):
+        if total <= max_bytes:
+            break
+        entry_size = size + (meta.stat().st_size if meta.exists() else 0)
+        for file in (mp3, meta):
+            try:
+                removed_bytes += file.stat().st_size
+                file.unlink(); removed_files += 1
+            except OSError:
+                pass
+        total -= entry_size
+    for tmp in d.glob("*.tmp"):
+        try:
+            if tmp.stat().st_mtime < now - 86400:
+                removed_bytes += tmp.stat().st_size
+                tmp.unlink(); removed_files += 1
+        except OSError:
+            pass
+    return {"removed_files": removed_files, "removed_bytes": removed_bytes,
+            "remaining_bytes": max(0, total)}
 
 
 def clear_cache() -> int:

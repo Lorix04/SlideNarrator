@@ -1,5 +1,5 @@
 """
-voice_library.py — Gestione delle voci clonate per pptx_tts
+voice_library.py — Gestione delle voci clonate per slide_narrator
 
 Questo è il "primo strato" della feature di voice cloning: si occupa SOLO di
 archiviare e gestire le voci clonate dall'utente. Non sintetizza nulla e non

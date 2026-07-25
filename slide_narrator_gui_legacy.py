@@ -1,5 +1,5 @@
 """
-pptx_tts_gui.py — Interfaccia grafica per pptx_tts.py
+slide_narrator_gui.py — Interfaccia grafica per slide_narrator.py
 
 Permette di:
 - selezionare il file PowerPoint e il file Excel tramite finestre di dialogo
@@ -19,9 +19,9 @@ I moduli voice_library.py, voice_clone.py e voice_manager.py devono trovarsi
 nella stessa cartella. Se mancano, la GUI funziona con le sole voci Microsoft.
 
 Uso:
-    python pptx_tts_gui.py
+    python slide_narrator_gui.py
 
-Il file pptx_tts.py deve trovarsi nella stessa cartella.
+Il file slide_narrator.py deve trovarsi nella stessa cartella.
 """
 
 import os
@@ -35,7 +35,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 
-import pptx_tts  # engine
+import slide_narrator  # engine
 
 # Moduli per le voci clonate. Import opzionale: se mancano, la GUI funziona
 # con le sole voci Microsoft e il pannello di gestione voci viene disabilitato.
@@ -50,7 +50,7 @@ except Exception as _e:
 
 # Esportazione video: la GUI mostra l'opzione "Video" solo se il motore ha il
 # modulo video_export (e quindi le sue dipendenze) disponibile.
-_VIDEO_AVAILABLE = getattr(pptx_tts, "_VIDEO_AVAILABLE", False)
+_VIDEO_AVAILABLE = getattr(slide_narrator, "_VIDEO_AVAILABLE", False)
 
 # Audio playback (optional — only used for the preview button).
 # L'import del modulo avviene al boot, ma pygame.mixer.init() è LAZY:
@@ -175,7 +175,7 @@ class StdoutRedirector:
 class App:
     def __init__(self, root):
         self.root = root
-        root.title("PPTX TTS — audio e video per le slide")
+        root.title("Slide Narrator — narrazione audio e video per presentazioni")
         root.geometry("780x740")
         root.minsize(700, 640)
 
@@ -187,6 +187,12 @@ class App:
         self.output_pptx_var = tk.StringVar()
         self.voice_var = tk.StringVar(value=VOICE_OPTIONS[0][0])
         self.rate_var = tk.IntVar(value=0)
+        self.volume_var = tk.IntVar(value=0)
+        self.pitch_var = tk.IntVar(value=0)
+        self.script_source_var = tk.StringVar(value="excel")
+        self.sheet_name_var = tk.StringVar(value="")
+        self.script_column_var = tk.StringVar(value="A")
+        self.has_header_var = tk.BooleanVar(value=False)
         # Qualità del modello PocketTTS per le voci clonate:
         #   "italian"     -> veloce (default)
         #   "italian_24l" -> qualità più alta, più lenta
@@ -202,11 +208,22 @@ class App:
         # OFF: all'apertura l'unica opzione attiva è "Riproduci automaticamente".
         self.auto_advance_var = tk.BooleanVar(value=False)
         self.transcode_audio_var = tk.BooleanVar(value=False)
-        # Tipo di output: "pptx" (default) o "video".
+        # Operazione: generazione completa oppure Fix di un PPTX già sonorizzato.
+        self.operation_mode_var = tk.StringVar(value="generate")
+        # Tipo di output: "pptx" (default) o "video". In modalità Fix resta pptx.
         self.output_mode_var = tk.StringVar(value="pptx")
+        self.fix_analysis_var = tk.StringVar(value="Seleziona un PowerPoint e avvia l’analisi.")
         self.resolution_var = tk.StringVar(value="1080p")
         self.subtitles_var = tk.BooleanVar(value=False)
         self.transition_var = tk.BooleanVar(value=False)
+        self.transition_style_var = tk.StringVar(value="fade")
+        self.render_backend_var = tk.StringVar(value="auto")
+        self.silent_slide_s_var = tk.DoubleVar(value=3.0)
+        self.fix_repair_invalid_var = tk.BooleanVar(value=False)
+        self.fix_regenerate_all_var = tk.BooleanVar(value=False)
+        self.fix_normalize_autoplay_var = tk.BooleanVar(value=False)
+        self.fix_normalize_advance_var = tk.BooleanVar(value=False)
+        self.fix_normalize_icon_var = tk.BooleanVar(value=False)
         self.preview_text_var = tk.StringVar(value=DEFAULT_PREVIEW_TEXT)
 
         # internal state
@@ -215,11 +232,24 @@ class App:
         # Stato per percentuale di progresso e calcolo ETA
         self._synthesis_start_time: float | None = None
         self._synthesis_total: int = 0
+        self._last_fix_analysis: dict | None = None
+        self._cancel_event = threading.Event()
+        self._worker_thread = None
 
         self._build_ui()
 
         # Pulisco i file temp di anteprima alla chiusura della finestra
         root.protocol("WM_DELETE_WINDOW", self._on_close)
+
+        if _CLONE_AVAILABLE:
+            try:
+                cleanup = voice_clone.cleanup_cache()
+                if cleanup.get("removed_files"):
+                    self._log(
+                        f"Pulizia cache automatica: {cleanup['removed_files']} file rimossi.\n"
+                    )
+            except Exception:
+                pass
 
         if not PYGAME_INSTALLED:
             self._log(
@@ -272,51 +302,152 @@ class App:
         # Header
         ttk.Label(
             outer,
-            text="PPTX TTS — audio e video per le slide",
+            text="Slide Narrator — narrazione audio e video per presentazioni",
             style="Title.TLabel",
         ).grid(row=0, column=0, sticky="w", pady=(0, 12))
 
-        # Tipo di output (PowerPoint con audio  /  Video MP4)
-        out_frame = ttk.Labelframe(outer, text=" Tipo di output ", padding=12)
-        out_frame.grid(row=1, column=0, sticky="ew", pady=(0, 10))
-        out_frame.columnconfigure(0, weight=1)
-        out_frame.columnconfigure(1, weight=1)
+        # Operazione: il Fix è una funzione separata e lavora solo sui PPTX.
+        operation_frame = ttk.Labelframe(outer, text=" Operazione ", padding=12)
+        operation_frame.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+        operation_frame.columnconfigure(0, weight=1)
+        operation_frame.columnconfigure(1, weight=1)
         ttk.Radiobutton(
-            out_frame, text="PowerPoint con audio",
+            operation_frame, text="Genera nuovo",
+            variable=self.operation_mode_var, value="generate",
+            command=self._on_operation_mode_change,
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Radiobutton(
+            operation_frame, text="Completa audio mancanti (Fix)",
+            variable=self.operation_mode_var, value="fix",
+            command=self._on_operation_mode_change,
+        ).grid(row=0, column=1, sticky="w")
+        ttk.Label(
+            operation_frame,
+            text="Il Fix controlla un PowerPoint già sonorizzato e genera solo gli audio delle slide che ne sono prive.",
+            foreground="#666", font=("Segoe UI", 9, "italic"), wraplength=690,
+        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(5, 0))
+
+        # Tipo di output (visibile soltanto in Genera nuovo).
+        self.out_frame = ttk.Labelframe(outer, text=" Tipo di output ", padding=12)
+        self.out_frame.grid(row=2, column=0, sticky="ew", pady=(0, 10))
+        self.out_frame.columnconfigure(0, weight=1)
+        self.out_frame.columnconfigure(1, weight=1)
+        ttk.Radiobutton(
+            self.out_frame, text="PowerPoint con audio",
             variable=self.output_mode_var, value="pptx",
             command=self._on_output_mode_change,
         ).grid(row=0, column=0, sticky="w")
         ttk.Radiobutton(
-            out_frame, text="Video (MP4)",
+            self.out_frame, text="Video (MP4)",
             variable=self.output_mode_var, value="video",
             command=self._on_output_mode_change,
         ).grid(row=0, column=1, sticky="w")
         if not _VIDEO_AVAILABLE:
             # Senza il modulo video (o LibreOffice/PyMuPDF) resta solo il pptx.
-            for child in out_frame.winfo_children():
+            for child in self.out_frame.winfo_children():
                 if isinstance(child, ttk.Radiobutton) and child.cget("value") == "video":
                     child.configure(state="disabled")
             ttk.Label(
-                out_frame,
+                self.out_frame,
                 text="(modulo video non disponibile)",
                 foreground="#888", font=("Segoe UI", 9, "italic"),
             ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(4, 0))
 
         # 1. Files
         files_frame = ttk.Labelframe(outer, text=" 1. File ", padding=12)
-        files_frame.grid(row=2, column=0, sticky="ew", pady=(0, 10))
+        files_frame.grid(row=3, column=0, sticky="ew", pady=(0, 10))
         files_frame.columnconfigure(1, weight=1)
 
-        self._file_row(files_frame, 0, "Presentazione PowerPoint:",
-                       self.input_pptx_var, self._browse_pptx, "Sfoglia…")
-        self._file_row(files_frame, 1, "File Excel con script (col. A):",
-                       self.input_xlsx_var, self._browse_xlsx, "Sfoglia…")
-        self._file_row(files_frame, 2, "Salva risultato come:",
-                       self.output_pptx_var, self._browse_output, "Salva…")
+        self.input_pptx_widgets = self._file_row(
+            files_frame, 0, "Presentazione PowerPoint:",
+            self.input_pptx_var, self._browse_pptx, "Sfoglia…")
+        self.input_xlsx_widgets = self._file_row(
+            files_frame, 1, "File Excel con script (col. A):",
+            self.input_xlsx_var, self._browse_xlsx, "Sfoglia…")
+        self.output_widgets = self._file_row(
+            files_frame, 2, "Salva risultato come:",
+            self.output_pptx_var, self._browse_output, "Salva…")
+
+        self.script_options_frame = ttk.Frame(files_frame)
+        self.script_options_frame.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(8, 0))
+        ttk.Label(self.script_options_frame, text="Sorgente script:").grid(row=0, column=0, sticky="w")
+        ttk.Radiobutton(
+            self.script_options_frame, text="Excel", variable=self.script_source_var,
+            value="excel", command=self._on_script_source_change,
+        ).grid(row=0, column=1, sticky="w", padx=(8, 0))
+        ttk.Radiobutton(
+            self.script_options_frame, text="Note PowerPoint", variable=self.script_source_var,
+            value="notes", command=self._on_script_source_change,
+        ).grid(row=0, column=2, sticky="w", padx=(8, 0))
+        ttk.Label(self.script_options_frame, text="Foglio:").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        self.sheet_entry = ttk.Entry(self.script_options_frame, width=16, textvariable=self.sheet_name_var)
+        self.sheet_entry.grid(row=1, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
+        ttk.Label(self.script_options_frame, text="Colonna:").grid(row=1, column=2, sticky="e", padx=(12, 0), pady=(6, 0))
+        self.column_entry = ttk.Entry(self.script_options_frame, width=5, textvariable=self.script_column_var)
+        self.column_entry.grid(row=1, column=3, sticky="w", padx=(5, 0), pady=(6, 0))
+        self.header_chk = ttk.Checkbutton(
+            self.script_options_frame, text="Prima riga intestazione",
+            variable=self.has_header_var,
+        )
+        self.header_chk.grid(row=1, column=4, sticky="w", padx=(12, 0), pady=(6, 0))
+        self.template_btn = ttk.Button(
+            self.script_options_frame, text="Crea modello Excel", command=self._create_script_template,
+        )
+        self.template_btn.grid(row=2, column=1, columnspan=2, sticky="w", padx=(8, 0), pady=(7, 0))
+
+        self.fix_analysis_frame = ttk.Frame(files_frame)
+        self.fix_analysis_frame.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(10, 0))
+        self.fix_analysis_frame.columnconfigure(1, weight=1)
+        self.analyze_fix_btn = ttk.Button(
+            self.fix_analysis_frame, text="Analizza audio presenti",
+            command=self._on_analyze_fix)
+        self.analyze_fix_btn.grid(row=0, column=0, sticky="w", padx=(0, 10))
+        ttk.Label(
+            self.fix_analysis_frame, textvariable=self.fix_analysis_var,
+            foreground="#444", wraplength=500, justify="left",
+        ).grid(row=0, column=1, sticky="w")
+        self.fix_tree = ttk.Treeview(
+            self.fix_analysis_frame,
+            columns=("stato", "formato", "durata", "autoplay", "avanza", "titolo"),
+            show="tree headings", selectmode="extended", height=6,
+        )
+        self.fix_tree.heading("#0", text="Slide")
+        for key, title, width in (
+            ("stato", "Stato", 105), ("formato", "Formato", 65),
+            ("durata", "Durata", 65), ("autoplay", "Auto", 52),
+            ("avanza", "Avanza", 58), ("titolo", "Titolo", 220),
+        ):
+            self.fix_tree.heading(key, text=title)
+            self.fix_tree.column(key, width=width, stretch=(key == "titolo"))
+        self.fix_tree.column("#0", width=55, stretch=False)
+        self.fix_tree.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+        fix_opts = ttk.Frame(self.fix_analysis_frame)
+        fix_opts.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(7, 0))
+        ttk.Checkbutton(
+            fix_opts, text="Rigenera tutte le slide", variable=self.fix_regenerate_all_var,
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Checkbutton(
+            fix_opts, text="Ripara audio corrotti/anomali", variable=self.fix_repair_invalid_var,
+        ).grid(row=0, column=1, sticky="w", padx=(12, 0))
+        ttk.Checkbutton(
+            fix_opts, text="Uniforma autoplay", variable=self.fix_normalize_autoplay_var,
+        ).grid(row=1, column=0, sticky="w", pady=(4, 0))
+        ttk.Checkbutton(
+            fix_opts, text="Uniforma avanzamento", variable=self.fix_normalize_advance_var,
+        ).grid(row=1, column=1, sticky="w", padx=(12, 0), pady=(4, 0))
+        ttk.Checkbutton(
+            fix_opts, text="Nascondi tutte le icone audio", variable=self.fix_normalize_icon_var,
+        ).grid(row=1, column=2, sticky="w", padx=(12, 0), pady=(4, 0))
+        ttk.Label(
+            fix_opts,
+            text="Le slide selezionate nella tabella vengono rigenerate. Se non selezioni nulla, il Fix completa solo gli audio mancanti.",
+            foreground="#666", font=("Segoe UI", 9, "italic"), wraplength=650,
+        ).grid(row=2, column=0, columnspan=3, sticky="w", pady=(4, 0))
+        self.fix_analysis_frame.grid_remove()
 
         # 2. Voice
         voice_frame = ttk.Labelframe(outer, text=" 2. Voce e velocità ", padding=12)
-        voice_frame.grid(row=3, column=0, sticky="ew", pady=(0, 10))
+        voice_frame.grid(row=4, column=0, sticky="ew", pady=(0, 10))
         voice_frame.columnconfigure(0, weight=1)
 
         # Picker unico delle voci (Microsoft + clonate), ricostruibile.
@@ -328,9 +459,12 @@ class App:
         top.grid(row=0, column=0, sticky="ew")
         top.columnconfigure(0, weight=1)
         ttk.Label(top, text="Scegli la voce:").grid(row=0, column=0, sticky="w")
+        self.refresh_voices_btn = ttk.Button(
+            top, text="Aggiorna voci Microsoft", command=self._refresh_online_voices)
+        self.refresh_voices_btn.grid(row=0, column=1, sticky="e", padx=(0, 6))
         self.manage_voices_btn = ttk.Button(
             top, text="Gestisci voci…", command=self._open_voice_manager)
-        self.manage_voices_btn.grid(row=0, column=1, sticky="e")
+        self.manage_voices_btn.grid(row=0, column=2, sticky="e")
         if not _CLONE_AVAILABLE:
             self.manage_voices_btn.configure(state="disabled")
 
@@ -369,6 +503,20 @@ class App:
         ttk.Scale(rate_frame, from_=-50, to=50, variable=self.rate_var,
                   command=lambda _: self._on_rate_change()).grid(
             row=0, column=1, sticky="ew", padx=10)
+        ttk.Label(rate_frame, text="Volume:").grid(row=1, column=0, sticky="w", pady=(6, 0))
+        self.volume_label = ttk.Label(rate_frame, text="+0%", width=6, anchor="e")
+        self.volume_label.grid(row=1, column=2, sticky="e", pady=(6, 0))
+        ttk.Scale(
+            rate_frame, from_=-100, to=100, variable=self.volume_var,
+            command=lambda _: self._on_voice_effect_change(),
+        ).grid(row=1, column=1, sticky="ew", padx=10, pady=(6, 0))
+        ttk.Label(rate_frame, text="Tonalità:").grid(row=2, column=0, sticky="w", pady=(6, 0))
+        self.pitch_label = ttk.Label(rate_frame, text="+0Hz", width=6, anchor="e")
+        self.pitch_label.grid(row=2, column=2, sticky="e", pady=(6, 0))
+        ttk.Scale(
+            rate_frame, from_=-100, to=100, variable=self.pitch_var,
+            command=lambda _: self._on_voice_effect_change(),
+        ).grid(row=2, column=1, sticky="ew", padx=10, pady=(6, 0))
 
         # Qualità del modello PocketTTS (solo per le voci clonate PocketTTS).
         self.pq_frame = ttk.Frame(voice_frame)
@@ -497,48 +645,69 @@ class App:
             vo, textvariable=self.resolution_var, state="readonly",
             width=14, values=["720p", "1080p"],
         ).grid(row=0, column=1, sticky="w", padx=(8, 0))
+        ttk.Label(vo, text="Rendering slide:").grid(row=1, column=0, sticky="w", pady=(7, 0))
+        ttk.Combobox(
+            vo, textvariable=self.render_backend_var, state="readonly", width=16,
+            values=["auto", "powerpoint", "libreoffice"],
+        ).grid(row=1, column=1, sticky="w", padx=(8, 0), pady=(7, 0))
 
         ttk.Checkbutton(
             vo, text="Mostra i sottotitoli nel video",
             variable=self.subtitles_var,
-        ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(12, 0))
+        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(12, 0))
         ttk.Label(
             vo,
             text="     ↳ I sottotitoli vengono comunque salvati anche in un file .srt a fianco al video.",
             foreground="#666", font=("Segoe UI", 9, "italic"),
-        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(2, 0))
+        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(2, 0))
 
         ttk.Checkbutton(
-            vo, text="Dissolvenza incrociata tra le slide",
+            vo, text="Transizione tra le slide",
             variable=self.transition_var,
-        ).grid(row=3, column=0, columnspan=2, sticky="w", pady=(12, 0))
+        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(12, 0))
+        ttk.Label(vo, text="Stile:").grid(row=5, column=0, sticky="w", pady=(5, 0))
+        ttk.Combobox(
+            vo, textvariable=self.transition_style_var, state="readonly", width=16,
+            values=["fade", "wipeleft", "wiperight", "slideleft", "slideright", "dissolve"],
+        ).grid(row=5, column=1, sticky="w", padx=(8, 0), pady=(5, 0))
+        ttk.Label(vo, text="Durata slide senza audio (secondi):").grid(
+            row=6, column=0, sticky="w", pady=(8, 0))
+        ttk.Spinbox(
+            vo, from_=0.5, to=60.0, increment=0.5, width=8,
+            textvariable=self.silent_slide_s_var,
+        ).grid(row=6, column=1, sticky="w", padx=(8, 0), pady=(8, 0))
         ttk.Label(
             vo,
-            text="     ↳ Transizione morbida tra una slide e l'altra; il parlato resta sequenziale.",
-            foreground="#666", font=("Segoe UI", 9, "italic"),
-        ).grid(row=4, column=0, columnspan=2, sticky="w", pady=(2, 0))
-
+            text="⚠ Il video è un rendering statico delle slide: animazioni interne, trigger e video incorporati non vengono riprodotti.",
+            foreground="#8a4b00", font=("Segoe UI", 9, "italic"), wraplength=620,
+        ).grid(row=7, column=0, columnspan=2, sticky="w", pady=(10, 0))
         ttk.Label(
             vo,
-            text="ℹ Il video richiede LibreOffice installato per disegnare le slide.",
+            text="ℹ In modalità automatica usa PowerPoint desktop su Windows, se disponibile; altrimenti LibreOffice. FFmpeg crea l'MP4.",
             foreground="#666", font=("Segoe UI", 9, "italic"),
-        ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(12, 0))
+        ).grid(row=8, column=0, columnspan=2, sticky="w", pady=(5, 0))
 
-        # Stato iniziale: mostro le opzioni giuste e la sotto-opzione autoplay.
-        self._on_output_mode_change()
+        # Stato iniziale: mostro le opzioni coerenti con l'operazione scelta.
+        self._on_operation_mode_change()
 
         # 3. Generate
-        gen_frame = ttk.Labelframe(outer, text=" 3. Genera ", padding=12)
-        gen_frame.grid(row=4, column=0, sticky="nsew")
+        gen_frame = ttk.Labelframe(outer, text=" 3. Esegui ", padding=12)
+        gen_frame.grid(row=5, column=0, sticky="nsew")
         gen_frame.columnconfigure(0, weight=1)
         # rowconfigure: ora il log è in row=3 (era row=2 prima dell'aggiunta
         # della label di progresso)
         gen_frame.rowconfigure(3, weight=1)
 
+        actions = ttk.Frame(gen_frame)
+        actions.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        actions.columnconfigure(0, weight=1)
         self.generate_btn = ttk.Button(
-            gen_frame, text="Genera presentazione con audio",
+            actions, text="Genera presentazione con audio",
             style="Generate.TButton", command=self._on_generate)
-        self.generate_btn.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        self.generate_btn.grid(row=0, column=0, sticky="ew")
+        self.cancel_btn = ttk.Button(
+            actions, text="Annulla", command=self._on_cancel, state="disabled")
+        self.cancel_btn.grid(row=0, column=1, sticky="e", padx=(8, 0))
 
         # Barra di avanzamento in modalità "determinate" (0-100). Per
         # l'anteprima vocale (operazione molto breve) si passa
@@ -560,12 +729,13 @@ class App:
         self.log_text.grid(row=3, column=0, sticky="nsew")
 
     def _file_row(self, parent, row, label, var, cmd, btn_text):
-        ttk.Label(parent, text=label).grid(
-            row=row, column=0, sticky="w", pady=4, padx=(0, 8))
-        ttk.Entry(parent, textvariable=var).grid(
-            row=row, column=1, sticky="ew", pady=4)
-        ttk.Button(parent, text=btn_text, command=cmd).grid(
-            row=row, column=2, sticky="e", padx=(8, 0), pady=4)
+        label_widget = ttk.Label(parent, text=label)
+        label_widget.grid(row=row, column=0, sticky="w", pady=4, padx=(0, 8))
+        entry_widget = ttk.Entry(parent, textvariable=var)
+        entry_widget.grid(row=row, column=1, sticky="ew", pady=4)
+        button_widget = ttk.Button(parent, text=btn_text, command=cmd)
+        button_widget.grid(row=row, column=2, sticky="e", padx=(8, 0), pady=4)
+        return label_widget, entry_widget, button_widget
 
     # --------------------------------------------------------------- voci
     def _rebuild_voice_list(self):
@@ -674,34 +844,121 @@ class App:
             self.auto_advance_lbl.grid_remove()
 
     def _generate_btn_label(self) -> str:
+        if self.operation_mode_var.get() == "fix":
+            return "Completa audio mancanti"
         return ("Genera video" if self.output_mode_var.get() == "video"
                 else "Genera presentazione con audio")
 
-    def _on_output_mode_change(self):
-        """Adatta la finestra al tipo di output: mostra le opzioni giuste,
-        aggiorna il pulsante e l'estensione del file di output."""
+    def _default_output_for_input(self, input_path: str) -> str:
+        p = Path(input_path)
+        if self.operation_mode_var.get() == "fix":
+            return str(p.with_name(f"{p.stem}_FIX.pptx"))
         if self.output_mode_var.get() == "video":
+            return str(p.with_name(f"{p.stem}_video.mp4"))
+        return str(p.with_name(f"{p.stem}_audio.pptx"))
+
+    def _on_operation_mode_change(self):
+        """Separa il flusso di generazione dal Fix, che è solo PowerPoint."""
+        is_fix = self.operation_mode_var.get() == "fix"
+        if is_fix:
+            self.output_mode_var.set("pptx")
+            self.out_frame.grid_remove()
+            self.fix_analysis_frame.grid()
+            self.input_pptx_widgets[0].configure(text="PowerPoint da controllare:")
+            self.output_widgets[0].configure(text="Salva PowerPoint corretto come:")
+            self.video_opts_frame.grid_remove()
+            self.pptx_opts_frame.grid()
+            self._on_autoplay_toggle()
+        else:
+            self.out_frame.grid()
+            self.fix_analysis_frame.grid_remove()
+            self.input_pptx_widgets[0].configure(text="Presentazione PowerPoint:")
+            self.output_widgets[0].configure(text="Salva risultato come:")
+            self._on_output_mode_change()
+        in_path = self.input_pptx_var.get().strip()
+        if in_path:
+            self.output_pptx_var.set(self._default_output_for_input(in_path))
+        if hasattr(self, "generate_btn") and not self._is_busy:
+            self.generate_btn.configure(text=self._generate_btn_label())
+        self._sync_output_extension()
+
+    def _on_output_mode_change(self):
+        """Adatta la finestra al formato finale della generazione completa."""
+        if self.operation_mode_var.get() == "fix":
+            self.output_mode_var.set("pptx")
+            self.video_opts_frame.grid_remove()
+            self.pptx_opts_frame.grid()
+            self._on_autoplay_toggle()
+        elif self.output_mode_var.get() == "video":
             self.pptx_opts_frame.grid_remove()
             self.video_opts_frame.grid()
         else:
             self.video_opts_frame.grid_remove()
             self.pptx_opts_frame.grid()
             self._on_autoplay_toggle()
-        # Il pulsante esiste solo dopo la costruzione di gen_frame: alla prima
-        # chiamata (durante _build_ui) potrebbe non esserci ancora.
         if hasattr(self, "generate_btn") and not self._is_busy:
             self.generate_btn.configure(text=self._generate_btn_label())
         self._sync_output_extension()
 
     def _sync_output_extension(self):
-        """Allinea l'estensione del file di output al tipo scelto (.mp4/.pptx)."""
+        """Allinea l'estensione al flusso scelto; il Fix è sempre .pptx."""
         cur = self.output_pptx_var.get().strip()
         if not cur:
             return
-        want = ".mp4" if self.output_mode_var.get() == "video" else ".pptx"
+        want = ".pptx" if self.operation_mode_var.get() == "fix" else (
+            ".mp4" if self.output_mode_var.get() == "video" else ".pptx"
+        )
         p = Path(cur)
         if p.suffix.lower() != want:
             self.output_pptx_var.set(str(p.with_suffix(want)))
+
+    def _on_analyze_fix(self):
+        """Analizza il PPTX e popola la tabella operativa del Fix."""
+        if self._is_busy:
+            return
+        path = self.input_pptx_var.get().strip()
+        if not path or not Path(path).exists():
+            messagebox.showerror("File mancante", "Seleziona un PowerPoint valido da controllare.")
+            return
+        try:
+            result = slide_narrator.analyze_pptx_audio(path)
+            metadata = {m["slide_num"]: m for m in slide_narrator.get_pptx_slide_metadata(path)}
+            self._last_fix_analysis = result
+            for item in self.fix_tree.get_children():
+                self.fix_tree.delete(item)
+            for slide_num in range(1, result["total_slides"] + 1):
+                detail = result["details"].get(slide_num, {})
+                status = detail.get("status", "missing")
+                status_label = {
+                    "valid": "Valido", "missing": "Mancante", "invalid": "Anomalo"
+                }.get(status, status)
+                duration = detail.get("duration_s")
+                duration_text = slide_narrator.format_duration(duration) if duration is not None else "—"
+                fmt = str(detail.get("format") or "—").upper().lstrip(".")
+                autoplay = "Sì" if detail.get("autoplay") else "No"
+                advance = "Sì" if detail.get("auto_advance") else "No"
+                title = metadata.get(slide_num, {}).get("title", "")
+                self.fix_tree.insert(
+                    "", "end", iid=str(slide_num), text=str(slide_num),
+                    values=(status_label, fmt, duration_text, autoplay, advance, title),
+                    tags=(status,),
+                )
+            self.fix_tree.tag_configure("invalid", background="#ffe5e5")
+            self.fix_tree.tag_configure("missing", background="#fff7d6")
+            text = (
+                f"Slide: {result['total_slides']} — Audio validi: {len(result['valid'])} — "
+                f"Mancanti: {len(result['missing'])} — Anomalie: {len(result['invalid'])}"
+            )
+            if result["missing"]:
+                text += "\nDa completare: " + ", ".join(map(str, result["missing"]))
+            if result["invalid"]:
+                text += "\nDa riparare o selezionare: " + ", ".join(map(str, sorted(result["invalid"])))
+            self.fix_analysis_var.set(text)
+            messagebox.showinfo("Analisi completata", text)
+        except Exception as exc:
+            self._last_fix_analysis = None
+            self.fix_analysis_var.set("Analisi non riuscita.")
+            messagebox.showerror("Errore di analisi", str(exc))
 
     def _on_mousewheel(self, event):
         """Scorre la finestra con la rotellina. Se il puntatore è sopra il log
@@ -730,7 +987,7 @@ class App:
                 cv, text, rate_str, path,
                 pocket_variant=self.pocket_quality_var.get())
         else:
-            pptx_tts.synthesize_to_file(text, voice, rate_str, path)
+            slide_narrator.synthesize_to_file(text, voice, rate_str, path, self._volume_string(), self._pitch_string())
 
     # ------------------------------------------------------------- browsers
     def _browse_pptx(self):
@@ -739,12 +996,75 @@ class App:
             filetypes=[("PowerPoint", "*.pptx"), ("Tutti i file", "*.*")])
         if path:
             self.input_pptx_var.set(path)
-            if not self.output_pptx_var.get():
-                p = Path(path)
-                if self.output_mode_var.get() == "video":
-                    self.output_pptx_var.set(str(p.with_name(f"{p.stem}_video.mp4")))
-                else:
-                    self.output_pptx_var.set(str(p.with_name(f"{p.stem}_audio.pptx")))
+            self.output_pptx_var.set(self._default_output_for_input(path))
+            self._last_fix_analysis = None
+            if self.operation_mode_var.get() == "fix":
+                self.fix_analysis_var.set("PowerPoint selezionato. Avvia l’analisi degli audio presenti.")
+
+    def _on_script_source_change(self):
+        excel = self.script_source_var.get() == "excel"
+        state = "normal" if excel else "disabled"
+        for widget in self.input_xlsx_widgets:
+            try:
+                widget.configure(state=state)
+            except Exception:
+                pass
+        self.sheet_entry.configure(state=state)
+        self.column_entry.configure(state=state)
+        self.header_chk.configure(state=state)
+        if excel:
+            self.input_xlsx_widgets[0].configure(text="File Excel con script:")
+        else:
+            self.input_xlsx_widgets[0].configure(text="Script dalle Note PowerPoint:")
+
+    def _create_script_template(self):
+        pptx_path = self.input_pptx_var.get().strip()
+        if not pptx_path or not Path(pptx_path).exists():
+            messagebox.showerror("File mancante", "Seleziona prima il PowerPoint.")
+            return
+        output = filedialog.asksaveasfilename(
+            title="Salva modello degli script", defaultextension=".xlsx",
+            initialfile=f"{Path(pptx_path).stem}_script.xlsx",
+            filetypes=[("Excel", "*.xlsx")],
+        )
+        if not output:
+            return
+        try:
+            slide_narrator.create_script_template(pptx_path, output)
+            self.input_xlsx_var.set(output)
+            self.script_source_var.set("excel")
+            self.sheet_name_var.set("Script")
+            self.script_column_var.set("E")
+            self.has_header_var.set(True)
+            self._on_script_source_change()
+            messagebox.showinfo("Modello creato", f"Modello Excel creato:\n{output}")
+        except Exception as exc:
+            messagebox.showerror("Errore", str(exc))
+
+    def _refresh_online_voices(self):
+        if self._is_busy:
+            return
+        self.refresh_voices_btn.configure(state="disabled")
+        def work():
+            try:
+                voices = slide_narrator.list_italian_edge_voices()
+                def apply():
+                    global VOICE_OPTIONS
+                    VOICE_OPTIONS = [
+                        (v["voice_id"], str(v["name"]).replace("Microsoft Server Speech Text to Speech Voice", "").strip(" ()") or v["voice_id"],
+                         (v.get("gender") or "").lower())
+                        for v in voices
+                    ]
+                    self._rebuild_voice_list()
+                    self.refresh_voices_btn.configure(state="normal")
+                    messagebox.showinfo("Voci aggiornate", f"Trovate {len(voices)} voci italiane.")
+                self.root.after(0, apply)
+            except Exception as exc:
+                self.root.after(0, lambda: (
+                    self.refresh_voices_btn.configure(state="normal"),
+                    messagebox.showerror("Errore voci", str(exc)),
+                ))
+        threading.Thread(target=work, daemon=True).start()
 
     def _browse_xlsx(self):
         path = filedialog.askopenfilename(
@@ -754,7 +1074,12 @@ class App:
             self.input_xlsx_var.set(path)
 
     def _browse_output(self):
-        if self.output_mode_var.get() == "video":
+        if self.operation_mode_var.get() == "fix":
+            path = filedialog.asksaveasfilename(
+                title="Salva PowerPoint completato",
+                defaultextension=".pptx",
+                filetypes=[("PowerPoint", "*.pptx")])
+        elif self.output_mode_var.get() == "video":
             path = filedialog.asksaveasfilename(
                 title="Salva video",
                 defaultextension=".mp4",
@@ -775,6 +1100,21 @@ class App:
     def _rate_string(self):
         v = self.rate_var.get()
         return f"{'+' if v >= 0 else ''}{v}%"
+
+
+    def _on_voice_effect_change(self):
+        volume = int(round(self.volume_var.get()))
+        pitch = int(round(self.pitch_var.get()))
+        self.volume_label.configure(text=f"{'+' if volume >= 0 else ''}{volume}%")
+        self.pitch_label.configure(text=f"{'+' if pitch >= 0 else ''}{pitch}Hz")
+
+    def _volume_string(self):
+        value = int(round(self.volume_var.get()))
+        return f"{'+' if value >= 0 else ''}{value}%"
+
+    def _pitch_string(self):
+        value = int(round(self.pitch_var.get()))
+        return f"{'+' if value >= 0 else ''}{value}Hz"
 
     # -------------------------------------------------------------- preview
     def _on_preview(self):
@@ -825,7 +1165,7 @@ class App:
                         os.unlink(self._preview_audio_path)
                     except Exception:
                         pass
-                fd, path = tempfile.mkstemp(suffix=".mp3", prefix="pptx_tts_preview_")
+                fd, path = tempfile.mkstemp(suffix=".mp3", prefix="slide_narrator_preview_")
                 os.close(fd)
                 self._synthesize_preview(text, voice, rate_str, path)
                 self._preview_audio_path = path
@@ -870,17 +1210,18 @@ class App:
     def _on_generate(self):
         if self._is_busy:
             return
-
         self._sync_output_extension()
         in_pptx = self.input_pptx_var.get().strip()
         in_xlsx = self.input_xlsx_var.get().strip()
         out_pptx = self.output_pptx_var.get().strip()
+        operation_mode = self.operation_mode_var.get()
+        script_source = self.script_source_var.get()
 
         if not in_pptx or not Path(in_pptx).exists():
             messagebox.showerror("File mancante", "Seleziona un file PowerPoint valido.")
             return
-        if not in_xlsx or not Path(in_xlsx).exists():
-            messagebox.showerror("File mancante", "Seleziona un file Excel valido.")
+        if script_source == "excel" and (not in_xlsx or not Path(in_xlsx).exists()):
+            messagebox.showerror("File mancante", "Seleziona un file Excel valido oppure usa le Note PowerPoint.")
             return
         if not out_pptx:
             messagebox.showerror("File mancante", "Specifica dove salvare il risultato.")
@@ -888,26 +1229,39 @@ class App:
         if Path(out_pptx).resolve() == Path(in_pptx).resolve():
             messagebox.showerror("Conflitto", "Il file di output deve essere diverso dall'input.")
             return
-        if Path(out_pptx).exists():
-            if not messagebox.askyesno(
-                    "Sovrascrivi?",
-                    f"Il file '{Path(out_pptx).name}' esiste già. Sovrascriverlo?"):
-                return
+        if operation_mode == "fix" and Path(out_pptx).suffix.lower() != ".pptx":
+            messagebox.showerror("Formato non valido", "Il Fix può produrre esclusivamente un PowerPoint .pptx.")
+            return
+        if Path(out_pptx).exists() and not messagebox.askyesno(
+            "Sovrascrivi?", f"Il file '{Path(out_pptx).name}' esiste già. Sovrascriverlo?"
+        ):
+            return
+
+        output_mode = "pptx" if operation_mode == "fix" else self.output_mode_var.get()
+        preflight = slide_narrator.preflight_system(
+            output_mode, out_pptx, input_pptx=in_pptx,
+            render_backend=self.render_backend_var.get(),
+        )
+        if not preflight["ok"]:
+            messagebox.showerror("Controllo preliminare", "\n".join(preflight["errors"]))
+            return
+        if preflight["warnings"] and not messagebox.askyesno(
+            "Avvisi preliminari",
+            "\n".join(preflight["warnings"]) + "\n\nProcedere comunque?",
+        ):
+            return
 
         self._is_busy = True
-        self.generate_btn.configure(state="disabled", text="Generazione in corso…")
-        # Durante la generazione blocco l'anteprima: edge-tts viene martellato
-        # dal motore, non ha senso lanciare richieste in parallelo dalla UI.
+        self._cancel_event.clear()
+        busy_text = "Fix in corso…" if operation_mode == "fix" else "Generazione in corso…"
+        self.generate_btn.configure(state="disabled", text=busy_text)
+        self.cancel_btn.configure(state="normal")
         self._set_preview_enabled(False)
-        # Se l'anteprima sta suonando, la fermo
         if _mixer_ready:
             try:
                 pygame.mixer.music.stop()
             except Exception:
                 pass
-        # Reset progress: barra a 0%, label "Avvio..." (e niente più animazione
-        # indeterminate). I successivi aggiornamenti arriveranno dal motore via
-        # progress_callback.
         self._set_progress_determinate(0, "Avvio…")
         self._synthesis_start_time = None
         self._synthesis_total = 0
@@ -915,40 +1269,64 @@ class App:
 
         voice = self.voice_var.get()
         rate_str = self._rate_string()
+        volume_str = self._volume_string()
+        pitch_str = self._pitch_string()
         autoplay = self.autoplay_var.get()
         auto_advance = self.auto_advance_var.get()
         transcode_audio = self.transcode_audio_var.get()
-        output_mode = self.output_mode_var.get()
         resolution = self.resolution_var.get()
         subtitles = self.subtitles_var.get()
         transition = self.transition_var.get()
+        transition_style = self.transition_style_var.get()
+        render_backend = self.render_backend_var.get()
+        try:
+            silent_slide_s = max(0.5, float(self.silent_slide_s_var.get()))
+        except Exception:
+            silent_slide_s = 3.0
         pocket_variant = self.pocket_quality_var.get()
         clone_workers = max(1, min(10, int(self.clone_workers_var.get() or 1)))
         use_cache = bool(self.use_cache_var.get())
         pocket_quantize = bool(self.pocket_quantize_var.get())
+        selected_fix_slides = {
+            int(item) for item in self.fix_tree.selection() if str(item).isdigit()
+        } if operation_mode == "fix" else set()
+        if operation_mode == "fix" and self._last_fix_analysis:
+            requested = set(selected_fix_slides)
+            if self.fix_regenerate_all_var.get():
+                requested.update(range(1, self._last_fix_analysis.get("total_slides", 0) + 1))
+            if self.fix_repair_invalid_var.get():
+                requested.update(self._last_fix_analysis.get("invalid", {}))
+            multi = sorted(
+                n for n in requested
+                if self._last_fix_analysis.get("details", {}).get(n, {}).get("audio_count", 0) > 1
+            )
+            if multi and not messagebox.askyesno(
+                "Più audio nella stessa slide",
+                "Le slide " + ", ".join(map(str, multi)) +
+                " contengono più audio. La rigenerazione rimuoverà tutti gli audio "
+                "di quelle slide, compresi eventuali musiche o effetti, e inserirà una sola narrazione. Procedere?",
+            ):
+                return
+        sheet_name = self.sheet_name_var.get().strip() or None
+        script_column = self.script_column_var.get().strip() or "A"
+        has_header = bool(self.has_header_var.get())
+        fix_regenerate_all = bool(self.fix_regenerate_all_var.get())
+        fix_repair_invalid = bool(self.fix_repair_invalid_var.get())
+        fix_normalize_autoplay = bool(self.fix_normalize_autoplay_var.get())
+        fix_normalize_advance = bool(self.fix_normalize_advance_var.get())
+        fix_normalize_icon = bool(self.fix_normalize_icon_var.get())
 
-        # Marshalling progress events from the worker thread (where the engine
-        # runs) onto the Tk main thread. lambda+default-arg captures the event
-        # by value to avoid the classic late-binding bug.
         def _progress_cb(event):
             self.root.after(0, lambda e=event: self._handle_progress_event(e))
 
         def work():
             redirector = StdoutRedirector(self.log_text)
-            # Salvo lo stdout originale e lo sostituisco a livello di
-            # processo. Non uso contextlib.redirect_stdout perché non è
-            # thread-safe e in alcuni casi su Windows gli output di asyncio
-            # / subprocess (ffmpeg) non vengono catturati. Sostituendo
-            # sys.stdout direttamente, ogni print() del motore trova subito
-            # il redirector. Inoltre forzo write_through-like: dopo ogni
-            # print il redirector chiama già self._append via Tk.after,
-            # quindi il widget si aggiorna appena Tk fa il prossimo idle.
             old_stdout = sys.stdout
             sys.stdout = redirector
             try:
-                pptx_tts.process(
+                common = dict(
                     input_pptx=in_pptx,
-                    scripts_xlsx=in_xlsx,
+                    scripts_xlsx=(in_xlsx if script_source == "excel" else None),
                     output_pptx=out_pptx,
                     voice=voice,
                     rate=rate_str,
@@ -956,35 +1334,90 @@ class App:
                     auto_advance=auto_advance,
                     progress_callback=_progress_cb,
                     transcode_audio=transcode_audio,
-                    output_mode=output_mode,
-                    resolution=resolution,
-                    subtitles=subtitles,
-                    transition=transition,
                     pocket_variant=pocket_variant,
                     clone_workers=clone_workers,
                     use_cache=use_cache,
                     pocket_quantize=pocket_quantize,
+                    volume=volume_str,
+                    pitch=pitch_str,
+                    script_source=script_source,
+                    sheet_name=sheet_name,
+                    script_column=script_column,
+                    has_header=has_header,
+                    cancel_event=self._cancel_event,
                 )
+                if operation_mode == "fix":
+                    slide_narrator.process_fix(
+                        **common,
+                        regenerate_slides=selected_fix_slides,
+                        regenerate_all=fix_regenerate_all,
+                        repair_invalid=fix_repair_invalid,
+                        normalize_autoplay=(autoplay if fix_normalize_autoplay else None),
+                        normalize_auto_advance=(auto_advance if fix_normalize_advance else None),
+                        normalize_icon_hidden=(True if fix_normalize_icon else None),
+                    )
+                else:
+                    slide_narrator.process(
+                        **common, output_mode=output_mode, resolution=resolution,
+                        subtitles=subtitles, transition=transition,
+                        silent_slide_s=silent_slide_s,
+                        transition_style=transition_style,
+                        render_backend=render_backend,
+                    )
                 self.root.after(0, lambda: self._generate_done(out_pptx))
-            except Exception as e:
-                err = str(e)
+            except slide_narrator.OperationCancelled:
+                self.root.after(0, self._generate_cancelled)
+            except Exception as exc:
+                err = str(exc)
                 self.root.after(0, lambda: self._generate_failed(err))
             finally:
                 sys.stdout = old_stdout
 
-        threading.Thread(target=work, daemon=True).start()
+        self._worker_thread = threading.Thread(target=work, daemon=True)
+        self._worker_thread.start()
+
+    def _on_cancel(self):
+        if not self._is_busy:
+            return
+        if not messagebox.askyesno("Annulla", "Interrompere l'operazione in corso?"):
+            return
+        self._cancel_event.set()
+        try:
+            if getattr(slide_narrator, "video_export", None):
+                slide_narrator.video_export.cancel_active_processes()
+        except Exception:
+            pass
+        self.cancel_btn.configure(state="disabled")
+        self._set_progress_idle("Annullamento in corso…")
+
+    def _generate_cancelled(self):
+        self._set_progress_idle("Annullato")
+        self.generate_btn.configure(state="normal", text=self._generate_btn_label())
+        self.cancel_btn.configure(state="disabled")
+        self._set_preview_enabled(True)
+        self._is_busy = False
+        self._log("\nOperazione annullata dall'utente.\n")
+        messagebox.showinfo("Annullato", "L'operazione è stata annullata. Il file originale non è stato modificato.")
 
     def _generate_done(self, out_path):
         self._set_progress_determinate(100, "Completato")
         self.generate_btn.configure(state="normal", text=self._generate_btn_label())
+        self.cancel_btn.configure(state="disabled")
         self._set_preview_enabled(True)
         self._is_busy = False
         out_p = Path(out_path)
         report_path = out_p.with_name(f"{out_p.stem}_durate.txt")
-        is_video = self.output_mode_var.get() == "video"
-        what = "Video generato" if is_video else "Presentazione generata"
-        open_q = ("Vuoi aprire ora il video?" if is_video
-                  else "Vuoi aprire ora la presentazione?")
+        is_fix = self.operation_mode_var.get() == "fix"
+        is_video = (not is_fix and self.output_mode_var.get() == "video")
+        if is_fix:
+            what = "PowerPoint completato"
+            open_q = "Vuoi aprire ora il PowerPoint corretto?"
+        elif is_video:
+            what = "Video generato"
+            open_q = "Vuoi aprire ora il video?"
+        else:
+            what = "Presentazione generata"
+            open_q = "Vuoi aprire ora la presentazione?"
         msg = (
             f"{what} con successo:\n  {out_path}\n\n"
             f"Report durate:\n  {report_path}\n\n"
@@ -996,10 +1429,12 @@ class App:
     def _generate_failed(self, err):
         self._set_progress_idle("Errore")
         self.generate_btn.configure(state="normal", text=self._generate_btn_label())
+        self.cancel_btn.configure(state="disabled")
         self._set_preview_enabled(True)
         self._is_busy = False
         self._log(f"\n⚠ ERRORE: {err}\n")
-        messagebox.showerror("Errore", f"Generazione fallita:\n{err}")
+        action = "Fix" if self.operation_mode_var.get() == "fix" else "Generazione"
+        messagebox.showerror("Errore", f"{action} fallito:\n{err}")
 
     # ------------------------------------------------------ progress helpers
     def _set_progress_indeterminate(self, label_text: str = ""):
@@ -1125,7 +1560,19 @@ class App:
         self.stop_btn.configure(state=new_state)
 
     def _on_close(self):
-        """Pulizia all'uscita: ferma l'audio e cancella il file MP3 temporaneo."""
+        """Chiusura sicura: richiede conferma e annulla eventuali processi."""
+        if self._is_busy:
+            if not messagebox.askyesno(
+                "Operazione in corso",
+                "È in corso una lavorazione. Annullarla e chiudere l'applicazione?",
+            ):
+                return
+            self._cancel_event.set()
+            try:
+                if getattr(slide_narrator, "video_export", None):
+                    slide_narrator.video_export.cancel_active_processes()
+            except Exception:
+                pass
         if _mixer_ready:
             try:
                 pygame.mixer.music.stop()

@@ -1,0 +1,59 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+
+# Runtime e impostazioni locali
+.slide_narrator/
+.slide_narrator_cache/
+*.log
+verifica_installazione.json
+verifica_installazione_finale.txt
+
+# Voci e dati personali
+voices/
+*.wav
+*.flac
+
+# File di input/output utente
+*.ppt
+*.pptx
+*.xls
+*.xlsx
+*.mp3
+*.mp4
+*.srt
+*_durate.txt
+*_captions.json
+
+# Credenziali e configurazioni private
+.env
+.env.*
+*.key
+*.pem
+
+# Build
+build/
+dist/
+*.spec
+
+# IDE / sistema operativo
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# PyInstaller / build EXE
+.venv-build/
+build/
+dist/
+*.spec
+build_slidenarrator.log
+release/
+installer/output/
+*.pfx
+*.p12
+*.cer
+*.crt

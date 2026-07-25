@@ -1,0 +1,23 @@
+{
+  "defaults": {
+    "voice": "it-IT-IsabellaNeural",
+    "rate": "+0%",
+    "autoplay": true,
+    "auto_advance": false
+  },
+  "jobs": [
+    {
+      "mode": "generate",
+      "input_pptx": "presentazione_1.pptx",
+      "scripts_xlsx": "script_1.xlsx",
+      "output_pptx": "presentazione_1_audio.pptx"
+    },
+    {
+      "mode": "fix",
+      "input_pptx": "presentazione_2_parziale.pptx",
+      "scripts_xlsx": "script_2.xlsx",
+      "output_pptx": "presentazione_2_FIX.pptx",
+      "repair_invalid": true
+    }
+  ]
+}
