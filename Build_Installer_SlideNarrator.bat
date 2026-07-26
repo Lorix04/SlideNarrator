@@ -34,4 +34,4 @@ echo.
 echo Installer creato in installer\output\
 echo Per una release pubblica firmalo con Firma_RELEASE_SlideNarrator.bat.
 pause
-exit /b 0
+exit /b 0

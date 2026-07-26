@@ -1,0 +1,33 @@
+{
+  "name": "SlideNarrator Adaptive",
+  "version": "1.0.0",
+  "date": "2026-07-26",
+  "status": "passed",
+  "required_documents": 7,
+  "contrast_checks": 16,
+  "unit_tests": 6,
+  "minimum_target_size": 36,
+  "control_height": 40,
+  "app_python_files_changed": 0,
+  "overlay_extraction_test": "passed",
+  "full_package_extraction_test": "passed",
+  "compiled_artifacts_in_packages": 0,
+  "contrast_ratios": {
+    "light.textPrimary.surface": 16.29,
+    "light.textSecondary.surface": 6.03,
+    "light.onPrimary.primary": 9.67,
+    "light.onAccent.accent": 5.83,
+    "light.success.successSurface": 4.64,
+    "light.warning.warningSurface": 4.96,
+    "light.error.errorSurface": 5.76,
+    "light.info.infoSurface": 5.49,
+    "dark.textPrimary.surface": 15.12,
+    "dark.textSecondary.surface": 9.43,
+    "dark.onPrimary.primary": 8.07,
+    "dark.onAccent.accent": 8.28,
+    "dark.success.successSurface": 7.17,
+    "dark.warning.warningSurface": 7.93,
+    "dark.error.errorSurface": 6.58,
+    "dark.info.infoSurface": 8.08
+  }
+}

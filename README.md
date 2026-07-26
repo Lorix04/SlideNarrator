@@ -10,6 +10,26 @@
 
 Lo script da leggere può essere caricato da un file Excel oppure dalle note delle slide. Ogni riga della colonna scelta nel file `.xlsx` corrisponde a una slide.
 
+## Sviluppo della nuova interfaccia
+
+La migrazione PySide6/QML avviene nel branch `feature/pyside6-ui`. La baseline Tkinter resta congelata nel tag `v2.9.0-tkinter`.
+
+Il design system approvato è documentato in:
+
+- `docs/DESIGN_SYSTEM.md`;
+- `docs/UI_COMPONENTS.md`;
+- `docs/RESPONSIVE_LAYOUT.md`;
+- `docs/ACCESSIBILITY.md`;
+- `design/tokens/slidenarrator.tokens.json`.
+
+Validazione locale:
+
+```powershell
+python .\tools\validate_design_system.py
+python -m unittest tests.test_design_system -v
+```
+
+
 ## Funzioni principali
 
 - Interfaccia grafica moderna con navigazione laterale e procedura guidata.

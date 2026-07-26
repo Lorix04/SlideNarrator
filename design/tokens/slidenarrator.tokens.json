@@ -1,0 +1,253 @@
+{
+  "meta": {
+    "name": "SlideNarrator Adaptive",
+    "version": "1.0.0",
+    "unit": "dp",
+    "description": "Token tecnici per la UI PySide6/Qt Quick di SlideNarrator"
+  },
+  "spacing": {
+    "0": 0,
+    "1": 4,
+    "2": 8,
+    "3": 12,
+    "4": 16,
+    "5": 20,
+    "6": 24,
+    "8": 32,
+    "10": 40,
+    "12": 48,
+    "16": 64
+  },
+  "radii": {
+    "none": 0,
+    "small": 4,
+    "button": 8,
+    "card": 12,
+    "dialog": 16,
+    "pill": 999
+  },
+  "dimensions": {
+    "sidebarExpanded": 228,
+    "sidebarCompact": 72,
+    "statusBarHeight": 30,
+    "controlHeight": 40,
+    "iconButtonSize": 36,
+    "minimumTargetSize": 36,
+    "navigationItemHeight": 44,
+    "navigationIconSize": 20,
+    "technologyIconSize": 24,
+    "borderWidth": 1,
+    "focusRingWidth": 2,
+    "focusRingGap": 2,
+    "pageMarginWide": 24,
+    "pageMarginStandard": 20,
+    "pageMarginCompact": 16,
+    "columnGap": 18,
+    "minimumWindowWidth": 800,
+    "minimumWindowHeight": 640,
+    "recommendedWindowWidth": 1180,
+    "recommendedWindowHeight": 720
+  },
+  "breakpoints": {
+    "narrow": 800,
+    "compact": 960,
+    "standard": 1180,
+    "wide": 1480
+  },
+  "typography": {
+    "families": [
+      "Inter",
+      "Segoe UI Variable",
+      "Segoe UI",
+      "SF Pro Text",
+      "Noto Sans",
+      "sans-serif"
+    ],
+    "weights": {
+      "regular": 400,
+      "medium": 500,
+      "semibold": 600,
+      "bold": 700
+    },
+    "sizes": {
+      "pageTitle": 28,
+      "sectionTitle": 20,
+      "cardTitle": 17,
+      "body": 14,
+      "bodySmall": 13,
+      "caption": 12,
+      "badge": 12
+    },
+    "lineHeights": {
+      "pageTitle": 36,
+      "sectionTitle": 28,
+      "cardTitle": 24,
+      "body": 20,
+      "bodySmall": 18,
+      "caption": 16,
+      "badge": 16
+    }
+  },
+  "motion": {
+    "fast": 90,
+    "standard": 150,
+    "slow": 220,
+    "reducedMotionDuration": 0
+  },
+  "themes": {
+    "light": {
+      "colors": {
+        "background": "#F4F7FA",
+        "surface": "#FFFFFF",
+        "surfaceAlt": "#FBFCFD",
+        "sidebar": "#082F3D",
+        "primary": "#0E4B5A",
+        "primaryHover": "#0A3E4B",
+        "accent": "#18B6D2",
+        "accentHover": "#0EA3BF",
+        "onPrimary": "#FFFFFF",
+        "onAccent": "#082F3D",
+        "textPrimary": "#17212B",
+        "textSecondary": "#536574",
+        "textDisabled": "#82909B",
+        "border": "#D4DEE6",
+        "focus": "#18B6D2",
+        "overlay": "#17212B99",
+        "success": "#147D4B",
+        "successSurface": "#E8F6EF",
+        "warning": "#9A5B00",
+        "warningSurface": "#FFF4D8",
+        "error": "#B42318",
+        "errorSurface": "#FDECEC",
+        "info": "#0D6B83",
+        "infoSurface": "#E6F6FA"
+      }
+    },
+    "dark": {
+      "colors": {
+        "background": "#0A141B",
+        "surface": "#10222C",
+        "surfaceAlt": "#132A35",
+        "sidebar": "#071F29",
+        "primary": "#24BBD2",
+        "primaryHover": "#36C6DA",
+        "accent": "#36C6DA",
+        "accentHover": "#54D2E2",
+        "onPrimary": "#0A141B",
+        "onAccent": "#071F29",
+        "textPrimary": "#F2F7FA",
+        "textSecondary": "#B9C7D0",
+        "textDisabled": "#7F919C",
+        "border": "#29404C",
+        "focus": "#54D2E2",
+        "overlay": "#000000B3",
+        "success": "#69D49A",
+        "successSurface": "#113728",
+        "warning": "#F2BB5E",
+        "warningSurface": "#3A2A0F",
+        "error": "#FF8A80",
+        "errorSurface": "#401C1A",
+        "info": "#78D5E4",
+        "infoSurface": "#10323A"
+      }
+    }
+  },
+  "contrastChecks": [
+    {
+      "theme": "light",
+      "foreground": "textPrimary",
+      "background": "surface",
+      "minimum": 4.5
+    },
+    {
+      "theme": "light",
+      "foreground": "textSecondary",
+      "background": "surface",
+      "minimum": 4.5
+    },
+    {
+      "theme": "light",
+      "foreground": "onPrimary",
+      "background": "primary",
+      "minimum": 4.5
+    },
+    {
+      "theme": "light",
+      "foreground": "onAccent",
+      "background": "accent",
+      "minimum": 4.5
+    },
+    {
+      "theme": "light",
+      "foreground": "success",
+      "background": "successSurface",
+      "minimum": 4.5
+    },
+    {
+      "theme": "light",
+      "foreground": "warning",
+      "background": "warningSurface",
+      "minimum": 4.5
+    },
+    {
+      "theme": "light",
+      "foreground": "error",
+      "background": "errorSurface",
+      "minimum": 4.5
+    },
+    {
+      "theme": "light",
+      "foreground": "info",
+      "background": "infoSurface",
+      "minimum": 4.5
+    },
+    {
+      "theme": "dark",
+      "foreground": "textPrimary",
+      "background": "surface",
+      "minimum": 4.5
+    },
+    {
+      "theme": "dark",
+      "foreground": "textSecondary",
+      "background": "surface",
+      "minimum": 4.5
+    },
+    {
+      "theme": "dark",
+      "foreground": "onPrimary",
+      "background": "primary",
+      "minimum": 4.5
+    },
+    {
+      "theme": "dark",
+      "foreground": "onAccent",
+      "background": "accent",
+      "minimum": 4.5
+    },
+    {
+      "theme": "dark",
+      "foreground": "success",
+      "background": "successSurface",
+      "minimum": 4.5
+    },
+    {
+      "theme": "dark",
+      "foreground": "warning",
+      "background": "warningSurface",
+      "minimum": 4.5
+    },
+    {
+      "theme": "dark",
+      "foreground": "error",
+      "background": "errorSurface",
+      "minimum": 4.5
+    },
+    {
+      "theme": "dark",
+      "foreground": "info",
+      "background": "infoSurface",
+      "minimum": 4.5
+    }
+  ]
+}
